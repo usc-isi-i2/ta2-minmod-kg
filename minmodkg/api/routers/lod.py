@@ -279,6 +279,8 @@ def render_entity_html(
 
     def make_tree(g: Graph, p: rdflib.term.Node, subj: rdflib.term.Node, visited: set):
         if isinstance(subj, RDFLiteral):
+            if str(subj).startswith(("http://", "https://")):
+                return H.a(href=str(subj), target="_blank")(subj)
             return H.p(subj)
 
         if isinstance(subj, URIRef):
