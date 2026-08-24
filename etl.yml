@@ -86,7 +86,7 @@ services:
       find_by_id: docker ps --format '{{{{index (split .Ports "-") 0}}}}' --filter name={ID}
       start_service: >-
         docker run --name {ID}
-        -d -p 127.0.0.1:{PORT}:5432
+        -d -p 0.0.0.0:{PORT}:5432
         -v {DB_DIR}:/database
         --shm-size=1G
         --network=minmod
