@@ -419,6 +419,53 @@ def validate_mineral_site(
                 )
 
 
+def validate_sample(
+    data: Sequence[dict] | Sequence["InputPublicSample"],
+    ent_service: EntityService,
+    verbose: bool = False,
+):
+    from minmodkg.api.models.public_sample import InputPublicSample
+
+    if len(data) == 0:
+        return
+
+    norm_samples: list[InputPublicSample] = []
+    if isinstance(data[0], dict):
+        for i, sample in enumerate(data):
+            assert isinstance(sample, dict)
+            try:
+                norm_samples.append(InputPublicSample.from_dict(sample))
+            except Exception as e:
+                raise ValueError(f"Invalid sample data at record {i}") from e
+    else:
+        for sample in data:
+            assert isinstance(sample, InputPublicSample)
+            norm_samples.append(sample)
+
+    units = ent_service.get_unit_uris()
+
+    for i, sample in tqdm(
+        enumerate(norm_samples),
+        total=len(norm_samples),
+        desc="Validate data content",
+        disable=not verbose,
+    ):
+        for a_i, analysis in enumerate(sample.analyses):
+            for e_i, element in enumerate(analysis.elements):
+                if element.grade_unit is not None:
+                    ValidatorHelper.optional_uri(
+                        element.grade_unit.normalized_uri,
+                        f"analyses[{a_i}].elements[{e_i}].grade_unit",
+                        units,
+                    )
+                if element.detection_limit_unit is not None:
+                    ValidatorHelper.optional_uri(
+                        element.detection_limit_unit.normalized_uri,
+                        f"analyses[{a_i}].elements[{e_i}].detection_limit_unit",
+                        units,
+                    )
+
+
 class ValidatorHelper:
     @staticmethod
     def optional_uri(

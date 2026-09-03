@@ -81,6 +81,8 @@ class Namespace:
         self.mr = SingleNS("mr", ns_cfg["mr"])
         self.mo = SingleNS("mo", ns_cfg["mo"])
         self.md = SingleNS("md", ns_cfg["mo-derived"])
+        self.gco = SingleNS("gco", ns_cfg["gco"])
+        self.gcr = SingleNS("gcr", ns_cfg["gcr"])
         self.dcterms = SingleNS("dcterms", "http://purl.org/dc/terms/")
         self.xsd = SingleNS("xsd", str(XSD))
         self.owl = SingleNS("owl", str(OWL))
