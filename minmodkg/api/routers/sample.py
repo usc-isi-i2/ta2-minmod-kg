@@ -10,6 +10,8 @@ from minmodkg.services.sample import (
     ArgumentError,
     ExpiredSnapshotIdError,
     SampleNotFoundError,
+    UnknownAnalysisError,
+    UnknownElementError,
 )
 from minmodkg.transformations import make_sample_id
 from minmodkg.typing import InternalID
@@ -100,6 +102,54 @@ def update_sample(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
     return OutputPublicSample.from_kgrel(updated).to_dict()
+
+
+@router.patch("/samples/{sample_id}")
+def patch_sample(
+    sample_id: InternalID,
+    patch: Annotated[dict, Body()],
+    sample_service: SampleServiceDep,
+    user: CurrentUserDep,
+    snapshot_id: Annotated[Optional[int], Query()] = None,
+):
+    """Apply a sparse, keyed edit to an existing sample -- only send the fields
+    that actually changed. Top-level Sample fields are matched by name; nested
+    `analyses`/`elements` are matched to existing records by `analysis_id`/
+    `label` (not array index), so only include the analysis/element being
+    edited plus its own changed field(s). This never creates a new sample,
+    analysis, or element -- an unrecognized analysis_id/label is a 422, not an
+    insert. See ta2-table-understanding issue #18 for the full contract.
+    """
+    _validate_patch_units(patch)
+
+    try:
+        updated = sample_service.patch(sample_id, patch, user.get_uri(), snapshot_id)
+    except SampleNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ExpiredSnapshotIdError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except (ArgumentError, UnknownAnalysisError, UnknownElementError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
+    return OutputPublicSample.from_kgrel(updated).to_dict()
+
+
+def _validate_patch_units(patch: dict):
+    units = EntityService.get_instance().get_unit_uris()
+    for a_i, a_patch in enumerate(patch.get("analyses", [])):
+        for e_i, e_patch in enumerate(a_patch.get("elements", [])):
+            for unit_field in ("grade_unit", "detection_limit_unit"):
+                unit = e_patch.get(unit_field)
+                if unit and unit.get("normalized_uri") is not None:
+                    if unit["normalized_uri"] not in units:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=(
+                                f"analyses[{a_i}].elements[{e_i}].{unit_field} has URI "
+                                f"'{unit['normalized_uri']}' which is not in the allowed set"
+                            ),
+                        )
 
 
 @router.post("/samples/validate")
