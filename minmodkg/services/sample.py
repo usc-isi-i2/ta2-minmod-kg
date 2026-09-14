@@ -7,13 +7,16 @@ from typing import Optional
 from minmodkg.misc.utils import format_datetime
 from minmodkg.models.kg.base import NS_GCO
 from minmodkg.models.kg.candidate_entity import CandidateEntity
+from minmodkg.models.kg.sample import Analysis, Element
 from minmodkg.models.kg.sample import EditEvent
 from minmodkg.models.kgrel.base import engine
 from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.sample import Sample
+from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.transformations import make_sample_id
 from minmodkg.typing import InternalID
 from sqlalchemy import Engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # fields that are either internal bookkeeping or not real ontology properties on
@@ -84,16 +87,6 @@ class SampleNotFoundError(Exception):
 
 class ExpiredSnapshotIdError(Exception):
     pass
-
-
-class UnknownAnalysisError(Exception):
-    """Raised when a patch's analyses[].analysis_id doesn't match any existing
-    analysis on the sample -- PATCH edits existing analyses, it never creates one."""
-
-
-class UnknownElementError(Exception):
-    """Raised when a patch's elements[].label doesn't match any existing element
-    on that analysis -- PATCH edits existing elements, it never creates one."""
 
 
 class SampleService:
@@ -185,14 +178,16 @@ class SampleService:
         user_uri: str,
         snapshot_id: Optional[int] = None,
     ) -> Sample:
-        """Apply a sparse, keyed patch to an existing sample. Only fields present
+        """Apply a sparse, keyed upsert to an existing sample. Only fields present
         in `patch` are changed; everything else -- including on any analysis/
         element not mentioned -- is left untouched. Nested analyses/elements are
         matched to existing records by analysis_id/label, not array index/position
         (so a patch survives the sample being re-fetched with analyses in a
         different order). An analysis_id or label that doesn't match an existing
-        record raises UnknownAnalysisError/UnknownElementError -- this never
-        creates a new analysis/element, only edits ones that already exist.
+        record creates a new analysis/element instead of erroring (see
+        ta2-table-understanding issue #18 -- HMI is no longer edit-only as of
+        2026-09-11). The sample itself must already exist -- creating a whole new
+        sample is SampleService.create()'s job, called from publish() below.
         """
         unknown_fields = set(patch.keys()) - _PATCHABLE_SAMPLE_FIELDS - {"analyses"}
         if unknown_fields:
@@ -232,10 +227,11 @@ class SampleService:
                             "Each analyses[] patch item requires analysis_id"
                         )
                     if a_id not in analyses_by_id:
-                        raise UnknownAnalysisError(
-                            f"No existing analysis with analysis_id={a_id!r} on sample {public_id!r}"
-                        )
-                    target_analysis = analyses_by_id[a_id]
+                        target_analysis = Analysis(analysis_id=a_id)
+                        existing.analyses.append(target_analysis)
+                        analyses_by_id[a_id] = target_analysis
+                    else:
+                        target_analysis = analyses_by_id[a_id]
 
                     unknown_a_fields = (
                         set(a_patch.keys())
@@ -265,10 +261,11 @@ class SampleService:
                                     "Each elements[] patch item requires label"
                                 )
                             if label not in elements_by_label:
-                                raise UnknownElementError(
-                                    f"No existing element with label={label!r} on analysis {a_id!r}"
-                                )
-                            target_element = elements_by_label[label]
+                                target_element = Element(label=label)
+                                target_analysis.elements.append(target_element)
+                                elements_by_label[label] = target_element
+                            else:
+                                target_element = elements_by_label[label]
 
                             unknown_e_fields = (
                                 set(e_patch.keys())
@@ -313,6 +310,165 @@ class SampleService:
             session.add(EventLog.from_sample_update(existing))
             session.commit()
         return existing
+
+    def publish(self, payload: dict, user_uri: str) -> dict:
+        """Batch upsert entrypoint for POST /papers/publish (ta2-table-understanding
+        issue #18): apply one paper's worth of sparse sample/analysis/element
+        edits-or-creates in a single call -- one curator Publish click, one call,
+        potentially touching several samples across several deposits.
+
+        Each sample is its own transaction, via create()/patch() -- one bad sample
+        doesn't block the rest of the batch from saving; failures are collected into
+        `errors` instead of raised. `paper_id` in the payload is not resolved to
+        anything here -- there is no MinMod-side record of the paper itself, see
+        issue #18 -- every write is addressed via mineral_site_id -> sample_id ->
+        analysis_id -> element label.
+
+        Element identity arrives as `symbol` (HMI's own field name, e.g. "Au"); ours
+        is `label` -- translated in place by _rename_element_symbol_to_label before
+        anything else runs.
+
+        Creating a brand-new MineralSite is deliberately NOT this method's job -- an
+        unresolvable mineral_site_id is reported as an error (via the same
+        IntegrityError create() already raises for an unknown FK), not created. New
+        sites go through HMI's existing deposit-publish flow instead.
+        """
+        deposits = payload.get("deposits")
+        if not isinstance(deposits, list):
+            raise ArgumentError("`deposits` must be a list")
+
+        created: list[dict] = []
+        updated: list[dict] = []
+        errors: list[dict] = []
+
+        for d_i, deposit in enumerate(deposits):
+            mineral_site_id = deposit.get("mineral_site_id")
+            if not mineral_site_id:
+                errors.append(
+                    {
+                        "path": f"deposits[{d_i}]",
+                        "detail": "mineral_site_id is required",
+                    }
+                )
+                continue
+
+            samples = deposit.get("samples")
+            if not isinstance(samples, list):
+                errors.append(
+                    {"path": f"deposits[{d_i}]", "detail": "`samples` must be a list"}
+                )
+                continue
+
+            for s_i, sample_patch in enumerate(samples):
+                path = f"deposits[{d_i}].samples[{s_i}]"
+                sample_id = sample_patch.get("sample_id")
+                if not sample_id:
+                    errors.append({"path": path, "detail": "sample_id is required"})
+                    continue
+
+                self._rename_element_symbol_to_label(sample_patch)
+
+                try:
+                    self._validate_units(sample_patch)
+                    self._validate_identity_keys(sample_patch)
+                    public_id = make_sample_id(mineral_site_id, sample_id)
+                    pre_existing = self.find_by_id(public_id)
+
+                    if pre_existing is None:
+                        new_sample = Sample.from_dict(
+                            {
+                                **sample_patch,
+                                "public_id": "",
+                                "mineral_site_id": mineral_site_id,
+                                "modified_at": 0,
+                            }
+                        )
+                        result = self.create(new_sample, user_uri)
+                        created.append(
+                            {
+                                "sample_id": result.public_id,
+                                "changed_properties": result.edit_history[
+                                    -1
+                                ].changed_properties,
+                            }
+                        )
+                    else:
+                        patch_only = {
+                            k: v for k, v in sample_patch.items() if k != "sample_id"
+                        }
+                        result = self.patch(public_id, patch_only, user_uri)
+                        if result.modified_at != pre_existing.modified_at:
+                            updated.append(
+                                {
+                                    "sample_id": result.public_id,
+                                    "changed_properties": result.edit_history[
+                                        -1
+                                    ].changed_properties,
+                                }
+                            )
+                except IntegrityError:
+                    errors.append(
+                        {
+                            "path": path,
+                            "sample_id": sample_id,
+                            "detail": (
+                                f"mineral_site_id {mineral_site_id!r} does not exist -- "
+                                "publish the deposit first"
+                            ),
+                        }
+                    )
+                except (ArgumentError, ExpiredSnapshotIdError, KeyError) as e:
+                    errors.append(
+                        {"path": path, "sample_id": sample_id, "detail": str(e)}
+                    )
+
+        return {"created": created, "updated": updated, "errors": errors}
+
+    @staticmethod
+    def _validate_units(sample_patch: dict) -> None:
+        """Same check as the single-sample PATCH route's _validate_patch_units,
+        reimplemented here (raising ArgumentError instead of HTTPException) so
+        publish() can catch it per-sample rather than rejecting the whole batch.
+        publish() bypasses that router helper entirely -- this path was silently
+        unvalidated until this was added."""
+        units = EntityService.get_instance().get_unit_uris()
+        for a_i, a_patch in enumerate(sample_patch.get("analyses", [])):
+            for e_i, e_patch in enumerate(a_patch.get("elements", [])):
+                for unit_field in ("grade_unit", "detection_limit_unit"):
+                    unit = e_patch.get(unit_field)
+                    if unit and unit.get("normalized_uri") is not None:
+                        if unit["normalized_uri"] not in units:
+                            raise ArgumentError(
+                                f"analyses[{a_i}].elements[{e_i}].{unit_field} has URI "
+                                f"'{unit['normalized_uri']}' which is not in the allowed set"
+                            )
+
+    @staticmethod
+    def _validate_identity_keys(sample_patch: dict) -> None:
+        """patch() validates analysis_id/label presence inline when merging into an
+        EXISTING sample -- but publish()'s create branch never calls patch() at all,
+        it goes straight through Sample.from_dict()'s lenient parsing (Analysis/
+        Element.from_dict() use dict.get(), so a missing identity key silently becomes
+        None instead of erroring). Catches that gap for both branches by checking
+        up front, before create()/patch() ever runs."""
+        for a_i, a_patch in enumerate(sample_patch.get("analyses", [])):
+            if not a_patch.get("analysis_id"):
+                raise ArgumentError(f"analyses[{a_i}] requires analysis_id")
+            for e_i, e_patch in enumerate(a_patch.get("elements", [])):
+                if not e_patch.get("label"):
+                    raise ArgumentError(
+                        f"analyses[{a_i}].elements[{e_i}] requires label (or symbol)"
+                    )
+
+    @staticmethod
+    def _rename_element_symbol_to_label(sample_patch: dict) -> None:
+        """Mutates `sample_patch` in place. HMI's element identity field is
+        `symbol` (e.g. "Au"); ours is `label` -- the one field-name gap between
+        HMI's own shape and ours for this contract (issue #18 §4)."""
+        for analysis in sample_patch.get("analyses", []):
+            for elem in analysis.get("elements", []):
+                if "symbol" in elem:
+                    elem["label"] = elem.pop("symbol")
 
     @staticmethod
     def _changed_properties(old: dict, new: dict) -> list[str]:

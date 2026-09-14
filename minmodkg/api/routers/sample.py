@@ -10,8 +10,6 @@ from minmodkg.services.sample import (
     ArgumentError,
     ExpiredSnapshotIdError,
     SampleNotFoundError,
-    UnknownAnalysisError,
-    UnknownElementError,
 )
 from minmodkg.transformations import make_sample_id
 from minmodkg.typing import InternalID
@@ -112,13 +110,15 @@ def patch_sample(
     user: CurrentUserDep,
     snapshot_id: Annotated[Optional[int], Query()] = None,
 ):
-    """Apply a sparse, keyed edit to an existing sample -- only send the fields
+    """Apply a sparse, keyed upsert to an existing sample -- only send the fields
     that actually changed. Top-level Sample fields are matched by name; nested
     `analyses`/`elements` are matched to existing records by `analysis_id`/
     `label` (not array index), so only include the analysis/element being
-    edited plus its own changed field(s). This never creates a new sample,
-    analysis, or element -- an unrecognized analysis_id/label is a 422, not an
-    insert. See ta2-table-understanding issue #18 for the full contract.
+    touched plus its own field(s). An `analysis_id`/`label` that doesn't match
+    an existing record creates a new one instead of erroring -- the sample
+    itself must already exist (this route addresses one by `sample_id` in the
+    URL; see POST /papers/publish for creating whole new samples in a batch).
+    See ta2-table-understanding issue #18 for the full contract.
     """
     _validate_patch_units(patch)
 
@@ -128,11 +128,37 @@ def patch_sample(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ExpiredSnapshotIdError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except (ArgumentError, UnknownAnalysisError, UnknownElementError) as e:
+    except ArgumentError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
         )
     return OutputPublicSample.from_kgrel(updated).to_dict()
+
+
+@router.post("/papers/publish")
+def publish_paper(
+    payload: Annotated[dict, Body()],
+    sample_service: SampleServiceDep,
+    user: CurrentUserDep,
+):
+    """Batch upsert for one paper's worth of sample/analysis/element edits and
+    creates in a single call -- the endpoint GeoChem HMI's Export/Publish action
+    calls. `:MineralResourcePaper` is a real GeoChem ontology class (see
+    geochem_v1.2.0.ttl), which is why this route is namespaced under /papers/
+    even though MinMod itself persists no Paper row -- the paper is this
+    request's addressing envelope, not a stored record. Body shape:
+    `{"paper_id": ..., "deposits": [{"mineral_site_id": ..., "samples": [...]}]}`,
+    sparse -- only touched deposits/samples/analyses/elements need to appear. An
+    unmatched `sample_id`/`analysis_id`/element `symbol` creates a new record; an
+    unresolvable `mineral_site_id` does not (that's a new MineralSite, out of
+    scope here -- publish the deposit first). Each sample applies as its own
+    transaction, so one bad sample doesn't block the rest of the batch. See
+    ta2-table-understanding issue #18 for the full contract.
+    """
+    try:
+        return sample_service.publish(payload, user.get_uri())
+    except ArgumentError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 def _validate_patch_units(patch: dict):
