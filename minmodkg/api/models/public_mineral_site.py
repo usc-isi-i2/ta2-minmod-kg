@@ -56,6 +56,9 @@ class OutputPublicMineralSite(BaseModel):
     mineral_inventory: list[MineralInventory] = Field(default_factory=list)
     discovered_year: Optional[int] = None
     reference: list[Reference] = Field(default_factory=list)
+    is_deleted: bool = False
+    deleted_by: Optional[IRI] = None
+    deleted_at: Optional[str] = None
     modified_at: str = Field(
         default_factory=lambda: format_datetime(datetime.now(timezone.utc))
     )
@@ -93,6 +96,9 @@ class OutputPublicMineralSite(BaseModel):
             mineral_inventory=ms.inventories,
             discovered_year=ms.discovered_year,
             reference=ms.reference,
+            is_deleted=ms.is_deleted,
+            deleted_by=ms.deleted_by,
+            deleted_at=ms.deleted_at,
             modified_at=format_nanoseconds(ms.modified_at),
             coordinates=(
                 Coordinates(
@@ -150,6 +156,9 @@ class OutputPublicMineralSite(BaseModel):
                 ("mineral_inventory", [v.to_dict() for v in self.mineral_inventory]),
                 ("discovered_year", self.discovered_year),
                 ("reference", [r.to_dict() for r in self.reference]),
+                ("is_deleted", self.is_deleted),
+                ("deleted_by", self.deleted_by),
+                ("deleted_at", self.deleted_at),
                 ("modified_at", self.modified_at),
                 (
                     "coordinates",
@@ -189,6 +198,16 @@ class InputPublicMineralSite(InputMineralSite):
         )
         site.ms.modified_at = time.time_ns()
         site.ms.created_by = user_uri
+        # deleted_by/deleted_at are server-derived, never trusted from the
+        # caller -- same overwrite-every-write convention as created_by above
+        # (MineralSite has no edit_history to check "did is_deleted actually
+        # change" against, unlike Sample's more careful patch()).
+        if site.ms.is_deleted:
+            site.ms.deleted_by = user_uri
+            site.ms.deleted_at = format_datetime(datetime.now(timezone.utc))
+        else:
+            site.ms.deleted_by = None
+            site.ms.deleted_at = None
         return site
 
     def to_dict(self):

@@ -1,0 +1,46 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # pygraphviz (a dev dependency) needs graphviz's C headers to build.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y graphviz libgraphviz-dev pkg-config
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      # Docker-free subset only: everything below runs against an in-memory
+      # SQLite engine or pure functions, no external services. The rest of
+      # tests/ (tests/api, tests/services/sync, tests/libraries/rdf/test_rdf_store.py,
+      # tests/services/test_mineral_site_service.py) depends on tests/conftest.py's
+      # Docker-orchestrated Fuseki/Postgres fixtures (kg/kgrel/client/auth_client) --
+      # wiring those into CI means building the minmod-postgres/minmod-fuseki images
+      # first and is tracked separately, not part of this workflow.
+      - name: Run tests
+        env:
+          CFG_FILE: tests/resources/config.yml
+        run: |
+          poetry run pytest \
+            tests/services/test_sample.py \
+            tests/test_validators.py \
+            tests/test_grade_tonnage_model.py \
+            tests/test_misc.py \
+            tests/models/kgrel/custom_types/test_site_score.py \
+            tests/libraries/rdf/test_rdf_model.py \
+            -v --no-cov

@@ -6,10 +6,19 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cached_property, lru_cache
 from importlib.metadata import version
 from pathlib import Path
-from typing import Annotated, Any, Callable, NotRequired, Optional, Sequence, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Callable,
+    NotRequired,
+    Optional,
+    Sequence,
+    TypedDict,
+)
 
 import orjson
 import typer
@@ -23,13 +32,16 @@ from minmodkg.models.kg.candidate_entity import CandidateEntity
 from minmodkg.models.kg.geology_info import RockType
 from minmodkg.models.kg.measure import Measure
 from minmodkg.services.kgrel_entity import EntityService
-from rdflib import RDF, SH, Graph
+from rdflib import RDF, SH, XSD, Graph, Literal, URIRef
 from tqdm.auto import tqdm
 
 from statickg.helper import CacheProcess, import_func
 from statickg.models.file_and_path import BaseType, RelPath
 from statickg.models.prelude import ETLOutput, RelPath, Repository
 from statickg.services.interface import BaseFileService
+
+if TYPE_CHECKING:
+    from minmodkg.models.kg.sample import Sample as KGSample
 
 
 class FilenameValidatorServiceConstructArgs(TypedDict):
@@ -417,6 +429,186 @@ def validate_mineral_site(
                     "mineral_inventory.material_form",
                     commodity_forms,
                 )
+
+
+def validate_sample(
+    data: Sequence[dict] | Sequence["InputPublicSample"],
+    ent_service: EntityService,
+    verbose: bool = False,
+):
+    from minmodkg.api.models.public_sample import InputPublicSample
+
+    if len(data) == 0:
+        return
+
+    norm_samples: list[InputPublicSample] = []
+    if isinstance(data[0], dict):
+        for i, sample in enumerate(data):
+            assert isinstance(sample, dict)
+            try:
+                norm_samples.append(InputPublicSample.from_dict(sample))
+            except Exception as e:
+                raise ValueError(f"Invalid sample data at record {i}") from e
+    else:
+        for sample in data:
+            assert isinstance(sample, InputPublicSample)
+            norm_samples.append(sample)
+
+    units = ent_service.get_unit_uris()
+
+    for i, sample in tqdm(
+        enumerate(norm_samples),
+        total=len(norm_samples),
+        desc="Validate data content",
+        disable=not verbose,
+    ):
+        for a_i, analysis in enumerate(sample.analyses):
+            for e_i, element in enumerate(analysis.elements):
+                if element.grade_unit is not None:
+                    ValidatorHelper.optional_uri(
+                        element.grade_unit.normalized_uri,
+                        f"analyses[{a_i}].elements[{e_i}].grade_unit",
+                        units,
+                    )
+                if element.detection_limit_unit is not None:
+                    ValidatorHelper.optional_uri(
+                        element.detection_limit_unit.normalized_uri,
+                        f"analyses[{a_i}].elements[{e_i}].detection_limit_unit",
+                        units,
+                    )
+
+
+# Vendored from ta2-table-understanding/schema/ -- that repo is the source of
+# truth for the ontology/shapes, this is a snapshot copy so the API doesn't
+# depend on a sibling checkout existing at runtime (same reasoning geochem-hmi
+# used for its own vendored copy at hmi_backend/data/ontology/). Re-copy both
+# files here whenever the ontology changes in a way that affects validation.
+_GEOCHEM_SCHEMA_DIR = Path(__file__).parent.parent / "schema"
+_GEOCHEM_SHAPES_FILE = _GEOCHEM_SCHEMA_DIR / "geochem_v1.2.1.shacl.ttl"
+_GEOCHEM_ONTOLOGY_FILE = _GEOCHEM_SCHEMA_DIR / "geochem_v1.2.1.ttl"
+
+@lru_cache(maxsize=1)
+def _shacl_shapes_graph() -> Graph:
+    return Graph().parse(_GEOCHEM_SHAPES_FILE, format="turtle")
+
+
+@lru_cache(maxsize=1)
+def _shacl_ontology_graph() -> Graph:
+    return Graph().parse(_GEOCHEM_ONTOLOGY_FILE, format="turtle")
+
+
+@lru_cache(maxsize=1)
+def _shacl_advisory_messages() -> frozenset[str]:
+    """Messages declared `sh:severity sh:Warning` anywhere in the shapes graph
+    (e.g. "An Analysis should reference at least one :element or :isotope",
+    "If :grade is specified, :grade_unit should also be specified") -- these
+    are recommendations, not requirements, by the shape file's own design.
+
+    pyshacl's SPARQLConstraintComponent results don't actually carry the
+    shape's declared severity through, though -- they come back as
+    sh:Violation regardless, both in resultSeverity and in the report text.
+    geochem-hmi's own SHACL test independently hit this exact tool limitation
+    and filters "by message rather than severity" for the same reason (its
+    docstring calls out the identical bug against this identical shape file).
+    Deriving the set from the shapes graph itself, rather than hardcoding the
+    one message that happened to get hit first, covers every Warning-severity
+    SPARQL rule in the file -- there are 8 as of this shape file's version, not
+    just the AnalyticalMethod one geochem-hmi's comment documents.
+    """
+    g = _shacl_shapes_graph()
+    return frozenset(
+        str(msg)
+        for shape in g.subjects(SH.severity, SH.Warning)
+        for msg in g.objects(shape, SH.message)
+    )
+
+
+_GEO_WKT_LITERAL = URIRef("http://www.opengis.net/ont/geosparql#wktLiteral")
+_GCO = "https://geochemistry.isi.edu/ontology/"
+_MO = "https://minmod.isi.edu/ontology/"
+# RDFModel.to_graph() only knows a field's Python type (str/float/bool/...),
+# not the ontology's declared rdfs:range for that specific property -- so
+# every str-typed field (IRI, CleanedNotEmptyStr, ...) comes out xsd:string
+# regardless of whether the ontology says xsd:anyURI/xsd:dateTime/
+# geo:wktLiteral. Harmless for the real triple store (Fuseki doesn't care),
+# but fails pyshacl's DatatypeConstraintComponent for every property the
+# shapes file actually constrains. Listed here as they're found -- checked
+# against the shapes file's own sh:datatype declarations, not guessed.
+_TARGET_DATATYPE_BY_PREDICATE = {
+    URIRef(_MO + "location"): _GEO_WKT_LITERAL,
+    URIRef(_GCO + "updated_by"): XSD.anyURI,
+    URIRef(_GCO + "updated_at"): XSD.dateTime,
+    URIRef(_GCO + "changed_properties"): XSD.anyURI,
+    URIRef(_GCO + "analysis_date"): XSD.dateTime,
+    URIRef(_GCO + "deleted_by"): XSD.anyURI,
+    URIRef(_GCO + "deleted_at"): XSD.dateTime,
+}
+
+
+def _normalize_graph_for_shacl(g: Graph) -> Graph:
+    """Two narrow, validation-only literal-retyping fixes, applied to a copy of
+    the graph -- neither touches the real serialization used for Fuseki/backups.
+    Both are pre-existing gaps in RDFModel.to_graph(), not introduced by SHACL
+    validation, that would otherwise fail every sample regardless of content:
+
+    1. `Literal(some_python_float, datatype=XSD.decimal)` -- what RDFModel
+       builds for every decimal-ranged field (grade, confidence, ...) -- keeps
+       its cached Python value as a `float`, not a `decimal.Decimal`, because
+       rdflib doesn't re-coerce an explicitly-typed literal's value at
+       construction time. pyshacl's datatype constraint checks that cached
+       Python type, not just the declared datatype URI, so it fails every one
+       of them. Round-tripping through `str()` forces rdflib to re-derive a
+       real Decimal from the lexical form.
+    2. Every predicate in _TARGET_DATATYPE_BY_PREDICATE: xsd:string ->
+       whatever the ontology actually declares, see that table's docstring.
+    """
+    normalized = Graph()
+    for s, p, o in g:
+        if isinstance(o, Literal):
+            if o.datatype == XSD.decimal:
+                o = Literal(str(o), datatype=XSD.decimal)
+            elif p in _TARGET_DATATYPE_BY_PREDICATE and o.datatype == XSD.string:
+                o = Literal(str(o), datatype=_TARGET_DATATYPE_BY_PREDICATE[p])
+        normalized.add((s, p, o))
+    return normalized
+
+
+def validate_sample_shacl(sample: KGSample) -> list[str]:
+    """Validate one Sample (and everything nested under it -- analyses,
+    elements, location, references) against the GeoChem SHACL shapes.
+
+    Returns a list of human-readable violation messages, empty if it conforms.
+    Never raises on a validation failure -- SampleService.publish() folds this
+    into its own per-sample errors[] the same way unit/identity validation
+    already work, so one sample failing SHACL doesn't abort the whole batch.
+
+    The ontology graph is loaded alongside the shapes, not just the shapes
+    alone -- without it, subclass edges (e.g. a concrete unit resource typed
+    under a commodity-form subclass) are invisible to `inference="rdfs"` and
+    produce false failures. geochem-hmi's own SHACL test documents hitting
+    exactly this gotcha; loading both graphs here avoids repeating it.
+    """
+    from pyshacl import validate as pyshacl_validate
+
+    data_graph = _normalize_graph_for_shacl(sample.to_graph())
+    conforms, _, report_text = pyshacl_validate(
+        data_graph,
+        shacl_graph=_shacl_shapes_graph(),
+        ont_graph=_shacl_ontology_graph(),
+        advanced=True,
+        inference="rdfs",
+        allow_warnings=True,
+    )
+    if conforms:
+        return []
+
+    messages = [
+        line.split("Message:", 1)[1].strip().strip("'\"")
+        for line in report_text.splitlines()
+        if "Message:" in line
+    ]
+    advisories = _shacl_advisory_messages()
+    return [m for m in messages if m not in advisories]
 
 
 class ValidatorHelper:

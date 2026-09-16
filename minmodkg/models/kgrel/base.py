@@ -7,6 +7,7 @@ from minmodkg.models.kg.candidate_entity import CandidateEntity
 from minmodkg.models.kg.geology_info import GeologyInfo
 from minmodkg.models.kg.mineral_inventory import MineralInventory
 from minmodkg.models.kg.reference import Reference
+from minmodkg.models.kg.sample_parts import Analysis, EditEvent
 from minmodkg.models.kgrel.custom_types import (
     DataclassType,
     DedupMineralSiteDepositType,
@@ -47,6 +48,8 @@ class Base(DeclarativeBase):
         list[CandidateEntity]: ListDataclassType(CandidateEntity),
         list[MineralInventory]: ListDataclassType(MineralInventory),
         list[Reference]: ListDataclassType(Reference),
+        list[Analysis]: ListDataclassType(Analysis),
+        list[EditEvent]: ListDataclassType(EditEvent),
         list[RefDepositType]: ListDataclassType(RefDepositType),
         GeologyInfo: DataclassType(GeologyInfo),
     }

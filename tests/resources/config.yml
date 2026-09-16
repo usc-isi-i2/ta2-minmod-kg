@@ -16,6 +16,8 @@ namespace:
   mr: https://minmod.isi.edu/resource/
   mo: https://minmod.isi.edu/ontology/
   mo-derived: https://minmod.isi.edu/derived/
+  gco: https://geochemistry.isi.edu/ontology/
+  gcr: https://geochemistry.isi.edu/resource/
 api_prefix: /api/v1
 lod_prefix: ""
 # How to set up an in-memory SQLite database that is shared across multiple connections of

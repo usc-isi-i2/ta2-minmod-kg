@@ -11,6 +11,7 @@ from minmodkg.misc.utils import format_nanoseconds
 from minmodkg.models.kgrel.data_source import DataSource
 from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.mineral_site import MineralSiteAndInventory
+from minmodkg.models.kgrel.sample import Sample
 from minmodkg.models.kgrel.user import get_username
 from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.services.sync.listener import Listener
@@ -31,6 +32,12 @@ class BackupListener(Listener):
         )
         self.same_as_journal: dict[
             str, list[tuple[InternalID, InternalID, int, int]]
+        ] = defaultdict(list)
+        # keyed by parent mineral_site_id only -- Sample has no created_by/source_id
+        # of its own to bucket by like MineralSite does, so this just mirrors the
+        # parent-site relationship that already exists.
+        self.sample_journal: dict[
+            InternalID, list[tuple[Literal["add", "update"], dict]]
         ] = defaultdict(list)
 
     def handle_site_add(
@@ -61,6 +68,12 @@ class BackupListener(Listener):
         # there will be a single same-as file for all users
         self._update_same_as(user_uri, groups, diff_groups, event.timestamp)
 
+    def handle_sample_add(self, event: EventLog, sample: Sample):
+        self._upsert_sample("add", sample)
+
+    def handle_sample_update(self, event: EventLog, sample: Sample):
+        self._upsert_sample("update", sample)
+
     def handle_end(self, events: Sequence[EventLog]):
         for (username, source_name, bucket_no), actions in self.site_journal.items():
             outfile = (
@@ -88,6 +101,30 @@ class BackupListener(Listener):
 
             outfile.parent.mkdir(parents=True, exist_ok=True)
             serde.json.ser(sites, outfile, indent=2)
+
+        for mineral_site_id, actions in self.sample_journal.items():
+            outfile = self.data_repo_dir / f"data/geochem-samples/{mineral_site_id}.json"
+            if outfile.exists():
+                samples = serde.json.deser(outfile)
+                id2index = {r["id"]: i for i, r in enumerate(samples)}
+            else:
+                samples = []
+                id2index = {}
+
+            for action, sample in actions:
+                if sample["id"] not in id2index:
+                    id2index[sample["id"]] = len(samples) - 1
+                    samples.append(sample)
+
+                if action == "add":
+                    # do nothing
+                    pass
+                else:
+                    assert action == "update"
+                    samples[id2index[sample["id"]]] = sample
+
+            outfile.parent.mkdir(parents=True, exist_ok=True)
+            serde.json.ser(samples, outfile, indent=2)
 
         for username, same_as_links in self.same_as_journal.items():
             outfile = self.data_repo_dir / f"data/same-as/{username}/same_as.csv"
@@ -146,6 +183,15 @@ class BackupListener(Listener):
         key = (username, source_name, bucket_no)
 
         self.site_journal[key].append((action, site.ms.to_kg().to_dict()))
+
+    def _upsert_sample(self, action: Literal["add", "update"], sample: Sample):
+        # to_dict() doesn't include the computed public_id (it's a cached_property,
+        # not a P()-annotated field -- see SampleIdent.id), so add it explicitly as
+        # the record's own merge key, mirroring how MineralSite's dict already has
+        # record_id available naturally.
+        record = sample.to_kg().to_dict()
+        record["id"] = sample.public_id
+        self.sample_journal[sample.mineral_site_id].append((action, record))
 
     def _update_same_as(
         self,
