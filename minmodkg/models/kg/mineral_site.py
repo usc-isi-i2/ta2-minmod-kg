@@ -80,7 +80,7 @@ class MineralSite(MineralSiteIdent, RDFModel):
     reference: Annotated[list[Reference], P()] = field(default_factory=list)
     discovered_year: Annotated[Optional[int], P()] = None
     # Soft-delete, same convention as :Sample/:Analysis/:Element -- see
-    # schema/geochem_v1.2.0.ttl. deleted_by/deleted_at are server-derived from
+    # schema/geochem_v1.2.1.ttl. deleted_by/deleted_at are server-derived from
     # the session, never client-supplied.
     is_deleted: Annotated[bool, P()] = False
     deleted_by: Annotated[Optional[IRI], P()] = None

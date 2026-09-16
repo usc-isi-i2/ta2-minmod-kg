@@ -11,7 +11,7 @@
 
 <https://geochemistry.isi.edu/ontology/> rdf:type owl:Ontology ;
                                           rdfs:comment "Merged GeoChemistry and MinMod ontology"@en ;
-                                          owl:versionInfo "1.2.0" ;
+                                          owl:versionInfo "1.2.1" ;
                                           owl:imports <https://minmod.isi.edu/ontology/> .
 
 #################################################################

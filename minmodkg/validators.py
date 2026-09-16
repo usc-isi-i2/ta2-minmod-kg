@@ -484,8 +484,8 @@ def validate_sample(
 # used for its own vendored copy at hmi_backend/data/ontology/). Re-copy both
 # files here whenever the ontology changes in a way that affects validation.
 _GEOCHEM_SCHEMA_DIR = Path(__file__).parent.parent / "schema"
-_GEOCHEM_SHAPES_FILE = _GEOCHEM_SCHEMA_DIR / "geochem_v1.2.0.shacl.ttl"
-_GEOCHEM_ONTOLOGY_FILE = _GEOCHEM_SCHEMA_DIR / "geochem_v1.2.0.ttl"
+_GEOCHEM_SHAPES_FILE = _GEOCHEM_SCHEMA_DIR / "geochem_v1.2.1.shacl.ttl"
+_GEOCHEM_ONTOLOGY_FILE = _GEOCHEM_SCHEMA_DIR / "geochem_v1.2.1.ttl"
 
 @lru_cache(maxsize=1)
 def _shacl_shapes_graph() -> Graph:
@@ -524,11 +524,25 @@ def _shacl_advisory_messages() -> frozenset[str]:
 
 
 _GEO_WKT_LITERAL = URIRef("http://www.opengis.net/ont/geosparql#wktLiteral")
-# mo:location -- the one WKT-geometry leaf RDFModel doesn't have a Python type
-# for -- gets typed xsd:string by RDFModel.to_graph() (there's no WKT-aware type
-# in the Python model), but the ontology declares its range geo:wktLiteral.
-# Same gap on MineralSite's own location, not something new to Sample.
-_WKT_PREDICATES = (URIRef("https://minmod.isi.edu/ontology/location"),)
+_GCO = "https://geochemistry.isi.edu/ontology/"
+_MO = "https://minmod.isi.edu/ontology/"
+# RDFModel.to_graph() only knows a field's Python type (str/float/bool/...),
+# not the ontology's declared rdfs:range for that specific property -- so
+# every str-typed field (IRI, CleanedNotEmptyStr, ...) comes out xsd:string
+# regardless of whether the ontology says xsd:anyURI/xsd:dateTime/
+# geo:wktLiteral. Harmless for the real triple store (Fuseki doesn't care),
+# but fails pyshacl's DatatypeConstraintComponent for every property the
+# shapes file actually constrains. Listed here as they're found -- checked
+# against the shapes file's own sh:datatype declarations, not guessed.
+_TARGET_DATATYPE_BY_PREDICATE = {
+    URIRef(_MO + "location"): _GEO_WKT_LITERAL,
+    URIRef(_GCO + "updated_by"): XSD.anyURI,
+    URIRef(_GCO + "updated_at"): XSD.dateTime,
+    URIRef(_GCO + "changed_properties"): XSD.anyURI,
+    URIRef(_GCO + "analysis_date"): XSD.dateTime,
+    URIRef(_GCO + "deleted_by"): XSD.anyURI,
+    URIRef(_GCO + "deleted_at"): XSD.dateTime,
+}
 
 
 def _normalize_graph_for_shacl(g: Graph) -> Graph:
@@ -545,15 +559,16 @@ def _normalize_graph_for_shacl(g: Graph) -> Graph:
        Python type, not just the declared datatype URI, so it fails every one
        of them. Round-tripping through `str()` forces rdflib to re-derive a
        real Decimal from the lexical form.
-    2. `mo:location`'s xsd:string -> geo:wktLiteral, see _WKT_PREDICATES above.
+    2. Every predicate in _TARGET_DATATYPE_BY_PREDICATE: xsd:string ->
+       whatever the ontology actually declares, see that table's docstring.
     """
     normalized = Graph()
     for s, p, o in g:
         if isinstance(o, Literal):
             if o.datatype == XSD.decimal:
                 o = Literal(str(o), datatype=XSD.decimal)
-            elif p in _WKT_PREDICATES and o.datatype == XSD.string:
-                o = Literal(str(o), datatype=_GEO_WKT_LITERAL)
+            elif p in _TARGET_DATATYPE_BY_PREDICATE and o.datatype == XSD.string:
+                o = Literal(str(o), datatype=_TARGET_DATATYPE_BY_PREDICATE[p])
         normalized.add((s, p, o))
     return normalized
 

@@ -145,7 +145,7 @@ def publish_paper(
     """Batch upsert for one paper's worth of sample/analysis/element edits and
     creates in a single call -- the endpoint GeoChem HMI's Export/Publish action
     calls. `:MineralResourcePaper` is a real GeoChem ontology class (see
-    geochem_v1.2.0.ttl), which is why this route is namespaced under /papers/
+    geochem_v1.2.1.ttl), which is why this route is namespaced under /papers/
     even though MinMod itself persists no Paper row -- the paper is this
     request's addressing envelope, not a stored record. Body shape:
     `{"paper_id": ..., "deposits": [{"mineral_site_id": ..., "samples": [...]}]}`,

@@ -10,8 +10,8 @@
 @base <https://geochemistry.isi.edu/ontology/> .
 
 <https://geochemistry.isi.edu/ontology/shacl> rdf:type owl:Ontology ;
-    rdfs:comment "SHACL shapes for the GeoChem ontology (geochem_v1.2.0.ttl)"@en ;
-    owl:versionInfo "1.2.0" ;
+    rdfs:comment "SHACL shapes for the GeoChem ontology (geochem_v1.2.1.ttl)"@en ;
+    owl:versionInfo "1.2.1" ;
     owl:imports <https://geochemistry.isi.edu/ontology/> .
 
 
@@ -172,6 +172,11 @@
         sh:path :reference ;
         sh:class mo:Reference ;
         sh:name "reference" ;
+    ] ;
+    sh:property [
+        sh:path :edit_history ;
+        sh:class :EditEvent ;
+        sh:name "edit history" ;
     ] ;
     sh:property [
         sh:path :sampling_method ;
@@ -407,6 +412,11 @@
         sh:path :reference ;
         sh:class mo:Reference ;
         sh:name "reference" ;
+    ] ;
+    sh:property [
+        sh:path :edit_history ;
+        sh:class :EditEvent ;
+        sh:name "edit history" ;
     ] .
 
 
@@ -477,6 +487,11 @@
         sh:path :reference ;
         sh:class mo:Reference ;
         sh:name "reference" ;
+    ] ;
+    sh:property [
+        sh:path :edit_history ;
+        sh:class :EditEvent ;
+        sh:name "edit history" ;
     ] .
 
 
@@ -494,6 +509,40 @@
         sh:minCount 1 ;
         sh:message "An Isotope must have an rdfs:label (e.g., '206Pb')" ;
         sh:name "label" ;
+    ] .
+
+
+#################################################################
+#    EditEvent
+#################################################################
+
+:EditEventShape rdf:type sh:NodeShape ;
+    sh:targetClass :EditEvent ;
+    sh:name "EditEvent" ;
+
+    sh:property [
+        sh:path :updated_by ;
+        sh:datatype xsd:anyURI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "An EditEvent must have exactly one :updated_by" ;
+        sh:name "updated by" ;
+    ] ;
+    sh:property [
+        sh:path :updated_at ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "An EditEvent must have exactly one :updated_at" ;
+        sh:name "updated at" ;
+    ] ;
+    sh:property [
+        sh:path :changed_properties ;
+        sh:datatype xsd:anyURI ;
+        sh:minCount 1 ;
+        sh:severity sh:Warning ;
+        sh:message "An EditEvent should list at least one :changed_properties" ;
+        sh:name "changed properties" ;
     ] .
 
 

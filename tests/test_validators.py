@@ -99,7 +99,7 @@ class TestMineralSiteParser:
 
 class TestValidateSampleShacl:
     """validate_sample_shacl() (ta2-table-understanding issue #18's SHACL gate)
-    against the real, vendored geochem_v1.2.0.shacl.ttl/.ttl files and the real
+    against the real, vendored geochem_v1.2.1.shacl.ttl/.ttl files and the real
     pyshacl pipeline -- not mocked, unlike test_sample.py's TestSHACLValidation,
     which isolates SampleService.publish()'s wiring instead. Docker-free: this
     only needs the KG-layer Sample dataclass, no DB."""
@@ -153,6 +153,30 @@ class TestValidateSampleShacl:
                                     "source": "test",
                                 },
                             }
+                        ],
+                    }
+                ],
+            }
+        )
+        assert validate_sample_shacl(sample) == []
+
+    def test_edit_history_datatypes_do_not_spuriously_fail(self):
+        """Regression guard: :EditEvent's SHACL shape (added along with
+        :EditEvent itself, ta2-table-understanding PR #16) requires
+        :updated_by as xsd:anyURI and :updated_at as xsd:dateTime, but
+        RDFModel.to_graph() only knows these fields are Python strs and types
+        them xsd:string -- would otherwise fail every sample with any edit
+        history at all, i.e. every sample that's ever been saved once."""
+        sample = Sample.from_dict(
+            {
+                "sample_id": "SM-4",
+                "mineral_site_id": "site__test__1__tester",
+                "edit_history": [
+                    {
+                        "updated_by": "https://minmod.isi.edu/users/u/tester",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "changed_properties": [
+                            "https://geochemistry.isi.edu/ontology/sample_id"
                         ],
                     }
                 ],

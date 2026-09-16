@@ -73,7 +73,7 @@ class Sample(MappedAsDataclass, Base):
     top_depth_m: Mapped[float | None] = mapped_column()
     bottom_depth_m: Mapped[float | None] = mapped_column()
     comments: Mapped[str | None] = mapped_column()
-    # mo:location_info widened to :Sample -- see schema/geochem_v1.2.0.ttl. No
+    # mo:location_info widened to :Sample -- see schema/geochem_v1.2.1.ttl. No
     # location_view flattened copy (unlike MineralSite) -- nothing queries
     # sample-level location by bounding box yet; add one if that need shows up.
     location: Mapped[Location | None] = mapped_column()
