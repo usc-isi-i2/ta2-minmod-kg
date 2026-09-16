@@ -2,19 +2,22 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from minmodkg.misc.utils import format_datetime
 from minmodkg.models.kg.base import NS_GCO
 from minmodkg.models.kg.candidate_entity import CandidateEntity
 from minmodkg.models.kg.sample import Analysis, Element
 from minmodkg.models.kg.sample import EditEvent
+from minmodkg.models.kg.sample import Sample as KGSample
 from minmodkg.models.kgrel.base import engine
+from minmodkg.models.kgrel.custom_types import Location
 from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.sample import Sample
 from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.transformations import make_sample_id
 from minmodkg.typing import InternalID
+from minmodkg.validators import validate_sample_shacl
 from sqlalchemy import Engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -42,6 +45,7 @@ _PATCHABLE_SAMPLE_FIELDS = {
     "sample_deposit_relation",
     "geological_province",
     "strat_unit_uid",
+    "strat_unit_name",
     "strat_grouping",
     "earth_material_group",
     "earth_material_qualifier",
@@ -58,7 +62,28 @@ _PATCHABLE_SAMPLE_FIELDS = {
     "top_depth_m",
     "bottom_depth_m",
     "comments",
+    "location",
+    "is_deleted",
 }
+# fields on :Sample that need constructing from a raw dict rather than assigning
+# the patch value directly -- same treatment grade_unit/detection_limit_unit
+# already get on Element, below
+_CANDIDATE_SHAPED_SAMPLE_FIELDS = {"location"}
+
+# The kgrel column name and the KG (RDF-facing) dataclass's field name usually
+# match, so NS_GCO.uristr(field) is a correct-enough guess at the real ontology
+# predicate for most fields -- but not always: kgrel's `location` mirrors
+# MineralSite's own `location`/`location_info` split, and its real predicate is
+# mo:location_info (not gco:location). Listed explicitly here rather than
+# guessed, so changed_properties records the actual predicate, not a plausible-
+# looking wrong one.
+_FIELD_TO_PROPERTY_URI = {"location": "https://minmod.isi.edu/ontology/location_info"}
+
+
+def _property_uri(field: str) -> str:
+    if field in _FIELD_TO_PROPERTY_URI:
+        return _FIELD_TO_PROPERTY_URI[field]
+    return NS_GCO.uristr(field)
 # analysis_id is the natural key used to target an existing analysis, not a
 # patchable field itself
 _PATCHABLE_ANALYSIS_FIELDS = {
@@ -70,11 +95,31 @@ _PATCHABLE_ANALYSIS_FIELDS = {
     "aggregation_method",
     "data_quality",
     "analysis_date",
+    "is_deleted",
 }
 # label is the natural key used to target an existing element, not a patchable
 # field itself -- isotopes aren't patchable at all (an Isotope has only `label`,
 # so "editing" one is really renaming its identity, same problem as sample_id above)
-_PATCHABLE_ELEMENT_FIELDS = {"grade", "grade_unit", "detection_limit", "detection_limit_unit"}
+_PATCHABLE_ELEMENT_FIELDS = {
+    "grade",
+    "grade_unit",
+    "detection_limit",
+    "detection_limit_unit",
+    "is_deleted",
+}
+
+
+def _stamp_deletion(obj, is_deleted: bool, user_uri: str, now: str) -> None:
+    """Server-derived deleted_by/deleted_at, mirroring EditEvent.updated_by/
+    updated_at's convention: never client-supplied. Called only when is_deleted
+    actually changed, so undelete (is_deleted -> False) clears both fields back
+    to None rather than leaving a stale "who deleted this" behind."""
+    if is_deleted:
+        obj.deleted_by = user_uri
+        obj.deleted_at = now
+    else:
+        obj.deleted_by = None
+        obj.deleted_at = None
 
 
 class ArgumentError(Exception):
@@ -87,6 +132,12 @@ class SampleNotFoundError(Exception):
 
 class ExpiredSnapshotIdError(Exception):
     pass
+
+
+class SHACLValidationError(Exception):
+    def __init__(self, messages: list[str]):
+        self.messages = messages
+        super().__init__("; ".join(messages))
 
 
 class SampleService:
@@ -104,10 +155,20 @@ class SampleService:
         with Session(self.engine, expire_on_commit=False) as session:
             return session.execute(q).scalar_one_or_none()
 
-    def create(self, sample: Sample, user_uri: str) -> Sample:
+    def create(
+        self,
+        sample: Sample,
+        user_uri: str,
+        validate_shacl: Optional[Callable[[KGSample], list[str]]] = None,
+    ) -> Sample:
         """Create a new sample. sample.public_id/edit_history/modified_at are
         computed here -- not trusted from the caller (see InputPublicSample.to_kgrel,
-        which deliberately leaves them as placeholders)."""
+        which deliberately leaves them as placeholders).
+
+        `validate_shacl`, if given, is called on the fully-formed sample right
+        before anything touches the session -- raises SHACLValidationError instead
+        of persisting on failure. Not run by default; publish() (below) is the
+        only caller that opts in -- see ta2-table-understanding issue #18."""
         if not sample.sample_id:
             raise ArgumentError(
                 "sample_id is required to compute this Sample's identifier/URI "
@@ -117,14 +178,24 @@ class SampleService:
 
         sample.public_id = make_sample_id(sample.mineral_site_id, sample.sample_id)
         now_ns = time.time_ns()
+        now = format_datetime(datetime.now(timezone.utc))
         sample.modified_at = now_ns
+        # deleted_by/deleted_at are server-derived, never trusted from the caller
+        # (same invariant as public_id/edit_history/modified_at above) -- stamped
+        # from is_deleted regardless of what the incoming object carries.
+        _stamp_deletion(sample, sample.is_deleted, user_uri, now)
         sample.edit_history = [
             EditEvent(
                 updated_by=user_uri,
-                updated_at=format_datetime(datetime.now(timezone.utc)),
+                updated_at=now,
                 changed_properties=self._changed_properties({}, sample.to_dict()),
             )
         ]
+
+        if validate_shacl is not None:
+            messages = validate_shacl(sample.to_kg())
+            if messages:
+                raise SHACLValidationError(messages)
 
         with Session(self.engine, expire_on_commit=False) as session:
             session.add(sample)
@@ -155,12 +226,23 @@ class SampleService:
                     f"The new snapshot of the sample is {existing.modified_at}"
                 )
 
+            now = format_datetime(datetime.now(timezone.utc))
+            # deleted_by/deleted_at aren't independently patchable (see
+            # _PATCHABLE_SAMPLE_FIELDS) -- re-stamp only if is_deleted actually
+            # flipped, otherwise carry the existing values over regardless of
+            # whatever the full-replace payload happened to carry.
+            if sample.is_deleted != existing.is_deleted:
+                _stamp_deletion(sample, sample.is_deleted, user_uri, now)
+            else:
+                sample.deleted_by = existing.deleted_by
+                sample.deleted_at = existing.deleted_at
+
             changed = self._changed_properties(existing.to_dict(), sample.to_dict())
 
             sample.edit_history = existing.edit_history + [
                 EditEvent(
                     updated_by=user_uri,
-                    updated_at=format_datetime(datetime.now(timezone.utc)),
+                    updated_at=now,
                     changed_properties=changed,
                 )
             ]
@@ -177,6 +259,7 @@ class SampleService:
         patch: dict,
         user_uri: str,
         snapshot_id: Optional[int] = None,
+        validate_shacl: Optional[Callable[[KGSample], list[str]]] = None,
     ) -> Sample:
         """Apply a sparse, keyed upsert to an existing sample. Only fields present
         in `patch` are changed; everything else -- including on any analysis/
@@ -188,6 +271,11 @@ class SampleService:
         ta2-table-understanding issue #18 -- HMI is no longer edit-only as of
         2026-09-11). The sample itself must already exist -- creating a whole new
         sample is SampleService.create()'s job, called from publish() below.
+
+        `validate_shacl`, if given, is called on the fully-merged post-patch
+        sample right before the update statement executes -- raises
+        SHACLValidationError instead of persisting on failure, so nothing about
+        the failed patch reaches the DB (same contract as create()'s hook).
         """
         unknown_fields = set(patch.keys()) - _PATCHABLE_SAMPLE_FIELDS - {"analyses"}
         if unknown_fields:
@@ -208,13 +296,20 @@ class SampleService:
                 )
 
             changed: set[str] = set()
+            now = format_datetime(datetime.now(timezone.utc))
 
             for field in _PATCHABLE_SAMPLE_FIELDS & patch.keys():
                 old_value = getattr(existing, field)
-                new_value = patch[field]
+                new_raw = patch[field]
+                if field in _CANDIDATE_SHAPED_SAMPLE_FIELDS:
+                    new_value = Location.from_dict(new_raw) if new_raw is not None else None
+                else:
+                    new_value = new_raw
                 if old_value != new_value:
                     setattr(existing, field, new_value)
                     changed.add(field)
+                    if field == "is_deleted":
+                        _stamp_deletion(existing, new_value, user_uri, now)
 
             if "analyses" in patch:
                 analyses_by_id = {
@@ -249,6 +344,8 @@ class SampleService:
                         if old_value != new_value:
                             setattr(target_analysis, field, new_value)
                             changed.add(field)
+                            if field == "is_deleted":
+                                _stamp_deletion(target_analysis, new_value, user_uri, now)
 
                     if "elements" in a_patch:
                         elements_by_label = {
@@ -291,6 +388,10 @@ class SampleService:
                                 if old_value != new_value:
                                     setattr(target_element, field, new_value)
                                     changed.add(field)
+                                    if field == "is_deleted":
+                                        _stamp_deletion(
+                                            target_element, new_value, user_uri, now
+                                        )
 
             if not changed:
                 # every provided value already matched the existing one -- a valid
@@ -300,11 +401,16 @@ class SampleService:
             existing.edit_history = existing.edit_history + [
                 EditEvent(
                     updated_by=user_uri,
-                    updated_at=format_datetime(datetime.now(timezone.utc)),
-                    changed_properties=[NS_GCO.uristr(f) for f in sorted(changed)],
+                    updated_at=now,
+                    changed_properties=[_property_uri(f) for f in sorted(changed)],
                 )
             ]
             existing.modified_at = time.time_ns()
+
+            if validate_shacl is not None:
+                messages = validate_shacl(existing.to_kg())
+                if messages:
+                    raise SHACLValidationError(messages)
 
             session.execute(existing.get_update_query())
             session.add(EventLog.from_sample_update(existing))
@@ -369,6 +475,7 @@ class SampleService:
                 self._rename_element_symbol_to_label(sample_patch)
 
                 try:
+                    self._resolve_element_units(sample_patch)
                     self._validate_units(sample_patch)
                     self._validate_identity_keys(sample_patch)
                     public_id = make_sample_id(mineral_site_id, sample_id)
@@ -383,7 +490,9 @@ class SampleService:
                                 "modified_at": 0,
                             }
                         )
-                        result = self.create(new_sample, user_uri)
+                        result = self.create(
+                            new_sample, user_uri, validate_shacl=validate_sample_shacl
+                        )
                         created.append(
                             {
                                 "sample_id": result.public_id,
@@ -396,7 +505,12 @@ class SampleService:
                         patch_only = {
                             k: v for k, v in sample_patch.items() if k != "sample_id"
                         }
-                        result = self.patch(public_id, patch_only, user_uri)
+                        result = self.patch(
+                            public_id,
+                            patch_only,
+                            user_uri,
+                            validate_shacl=validate_sample_shacl,
+                        )
                         if result.modified_at != pre_existing.modified_at:
                             updated.append(
                                 {
@@ -420,6 +534,14 @@ class SampleService:
                 except (ArgumentError, ExpiredSnapshotIdError, KeyError) as e:
                     errors.append(
                         {"path": path, "sample_id": sample_id, "detail": str(e)}
+                    )
+                except SHACLValidationError as e:
+                    errors.append(
+                        {
+                            "path": path,
+                            "sample_id": sample_id,
+                            "detail": "SHACL validation failed: " + "; ".join(e.messages),
+                        }
                     )
 
         return {"created": created, "updated": updated, "errors": errors}
@@ -471,7 +593,54 @@ class SampleService:
                     elem["label"] = elem.pop("symbol")
 
     @staticmethod
+    def _resolve_element_units(sample_patch: dict) -> None:
+        """Mutates `sample_patch` in place. grade_unit/detection_limit_unit
+        arrive as a bare label or a MinMod unit URI (e.g. "g/t", "ppm", or
+        "https://minmod.isi.edu/resource/Q1") per issue #18 §5 -- resolve
+        against known units and rewrite in place as the wrapped CandidateEntity
+        shape (observed_name/confidence/source/normalized_uri) that
+        CandidateEntity.from_dict() and _validate_units() below both expect.
+
+        A value that's already a dict is left untouched (the older wrapped
+        shape some callers -- and all of this file's own tests predating the
+        bare-label decision -- still send directly). Only a bare string is
+        translated. Called before _validate_units() so that by the time
+        anything else looks at grade_unit/detection_limit_unit, it's always
+        the wrapped shape -- eliminates the AttributeError a bare string used
+        to cause in _validate_units (a str has no .get)."""
+        ent_service = EntityService.get_instance()
+        unit_uris = ent_service.get_unit_uris()
+        label_index: dict[str, str] = {}
+        for unit in ent_service.get_units():
+            label_index[unit.name.strip().lower()] = unit.uri
+            for alias in unit.aliases:
+                label_index[alias.strip().lower()] = unit.uri
+
+        for a_i, a_patch in enumerate(sample_patch.get("analyses", [])):
+            for e_i, e_patch in enumerate(a_patch.get("elements", [])):
+                for unit_field in ("grade_unit", "detection_limit_unit"):
+                    raw = e_patch.get(unit_field)
+                    if not isinstance(raw, str):
+                        continue
+                    label = raw.strip()
+                    if label in unit_uris:
+                        normalized_uri = label
+                    else:
+                        normalized_uri = label_index.get(label.lower())
+                    if normalized_uri is None:
+                        raise ArgumentError(
+                            f"analyses[{a_i}].elements[{e_i}].{unit_field} value "
+                            f"{raw!r} does not match any known unit label or URI"
+                        )
+                    e_patch[unit_field] = {
+                        "observed_name": raw,
+                        "confidence": 1.0,
+                        "source": "server-resolved from bare label (issue #18 §5)",
+                        "normalized_uri": normalized_uri,
+                    }
+
+    @staticmethod
     def _changed_properties(old: dict, new: dict) -> list[str]:
         keys = (set(old.keys()) | set(new.keys())) - _NON_PROPERTY_FIELDS
         changed = sorted(k for k in keys if old.get(k) != new.get(k))
-        return [NS_GCO.uristr(k) for k in changed]
+        return [_property_uri(k) for k in changed]

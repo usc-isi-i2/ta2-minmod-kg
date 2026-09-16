@@ -74,6 +74,9 @@ def engine():
                 mineral_form=[],
                 geology_info=None,
                 discovered_year=None,
+                is_deleted=False,
+                deleted_by=None,
+                deleted_at=None,
                 created_by=USER,
                 modified_at=0,
             )
@@ -331,6 +334,203 @@ class TestPublish:
         assert result["errors"] == []
         assert len(result["created"]) == 1
 
+
+class TestStratUnitNameAndLocation:
+    """strat_unit_name (independent of strat_unit_uid) and location (mo:location_info
+    widened to :Sample) -- both added as normal patchable fields alongside the
+    existing scalar ones, see ta2-table-understanding issue #19."""
+
+    def test_patches_strat_unit_name_independently_of_uid(self, service: SampleService):
+        service.create(
+            RelSample.from_dict(
+                {
+                    "public_id": "",
+                    "mineral_site_id": SITE_ID,
+                    "sample_id": "SM-STRAT-1",
+                    "strat_unit_uid": "SU-001",
+                    "modified_at": 0,
+                }
+            ),
+            USER,
+        )
+        patched = service.patch(
+            sample_public_id("SM-STRAT-1"),
+            {"strat_unit_name": "Fort Payne Formation"},
+            USER,
+        )
+        assert patched.strat_unit_name == "Fort Payne Formation"
+        assert patched.strat_unit_uid == "SU-001"
+        assert (
+            "https://geochemistry.isi.edu/ontology/strat_unit_name"
+            in patched.edit_history[-1].changed_properties
+        )
+
+    def test_patches_location(self, service: SampleService):
+        service.create(
+            RelSample.from_dict(
+                {
+                    "public_id": "",
+                    "mineral_site_id": SITE_ID,
+                    "sample_id": "SM-LOC-1",
+                    "modified_at": 0,
+                }
+            ),
+            USER,
+        )
+        patched = service.patch(
+            sample_public_id("SM-LOC-1"),
+            {"location": {"coordinates": "POINT(-84.6 35.6)"}},
+            USER,
+        )
+        assert patched.location is not None
+        assert patched.location.coordinates == "POINT(-84.6 35.6)"
+        # the real predicate is mo:location_info, not a guessed gco:location --
+        # see _FIELD_TO_PROPERTY_URI's docstring for the bug this guards against
+        assert (
+            "https://minmod.isi.edu/ontology/location_info"
+            in patched.edit_history[-1].changed_properties
+        )
+        assert (
+            "https://geochemistry.isi.edu/ontology/location"
+            not in patched.edit_history[-1].changed_properties
+        )
+
+
+class TestSoftDelete:
+    """is_deleted on Sample/Analysis/Element: a normal patchable field, not a new
+    verb/endpoint. deleted_by/deleted_at are server-stamped when is_deleted actually
+    changes, and cleared on undelete -- see SampleService._stamp_deletion."""
+
+    def test_deleting_sample_stamps_deleted_by_and_at(self, service: SampleService):
+        service.create(
+            RelSample.from_dict(
+                {
+                    "public_id": "",
+                    "mineral_site_id": SITE_ID,
+                    "sample_id": "SM-DEL-1",
+                    "modified_at": 0,
+                }
+            ),
+            USER,
+        )
+        patched = service.patch(
+            sample_public_id("SM-DEL-1"), {"is_deleted": True}, USER
+        )
+        assert patched.is_deleted is True
+        assert patched.deleted_by == USER
+        assert patched.deleted_at is not None
+        assert (
+            "https://geochemistry.isi.edu/ontology/is_deleted"
+            in patched.edit_history[-1].changed_properties
+        )
+
+    def test_undeleting_sample_clears_deleted_by_and_at(self, service: SampleService):
+        service.create(
+            RelSample.from_dict(
+                {
+                    "public_id": "",
+                    "mineral_site_id": SITE_ID,
+                    "sample_id": "SM-DEL-2",
+                    "modified_at": 0,
+                }
+            ),
+            USER,
+        )
+        service.patch(sample_public_id("SM-DEL-2"), {"is_deleted": True}, USER)
+        patched = service.patch(
+            sample_public_id("SM-DEL-2"), {"is_deleted": False}, USER
+        )
+        assert patched.is_deleted is False
+        assert patched.deleted_by is None
+        assert patched.deleted_at is None
+
+    def test_deleting_element_stamps_only_the_element(self, service: SampleService):
+        service.create(
+            RelSample.from_dict(
+                {
+                    "public_id": "",
+                    "mineral_site_id": SITE_ID,
+                    "sample_id": "SM-DEL-3",
+                    "analyses": [
+                        {
+                            "analysis_id": "A-1",
+                            "elements": [{"label": "Au", "grade": 1.0}],
+                        }
+                    ],
+                    "modified_at": 0,
+                }
+            ),
+            USER,
+        )
+        patched = service.patch(
+            sample_public_id("SM-DEL-3"),
+            {"analyses": [{"analysis_id": "A-1", "elements": [{"label": "Au", "is_deleted": True}]}]},
+            USER,
+        )
+        assert patched.is_deleted is False
+        assert patched.deleted_by is None
+        [analysis] = patched.analyses
+        assert analysis.is_deleted is False
+        assert analysis.deleted_by is None
+        [element] = analysis.elements
+        assert element.is_deleted is True
+        assert element.deleted_by == USER
+        assert element.deleted_at is not None
+
+    def test_deleting_analysis_stamps_only_the_analysis(self, service: SampleService):
+        service.create(
+            RelSample.from_dict(
+                {
+                    "public_id": "",
+                    "mineral_site_id": SITE_ID,
+                    "sample_id": "SM-DEL-4",
+                    "analyses": [{"analysis_id": "A-1"}],
+                    "modified_at": 0,
+                }
+            ),
+            USER,
+        )
+        patched = service.patch(
+            sample_public_id("SM-DEL-4"),
+            {"analyses": [{"analysis_id": "A-1", "is_deleted": True}]},
+            USER,
+        )
+        [analysis] = patched.analyses
+        assert analysis.is_deleted is True
+        assert analysis.deleted_by == USER
+        assert analysis.deleted_at is not None
+        assert patched.is_deleted is False
+
+    def test_deleting_via_publish_and_undeleting(self, service: SampleService):
+        service.create(
+            RelSample.from_dict(
+                {
+                    "public_id": "",
+                    "mineral_site_id": SITE_ID,
+                    "sample_id": "SM-DEL-5",
+                    "modified_at": 0,
+                }
+            ),
+            USER,
+        )
+        result = service.publish(
+            publish_payload({"sample_id": "SM-DEL-5", "is_deleted": True}), USER
+        )
+        assert result["errors"] == []
+        deleted = service.find_by_id(sample_public_id("SM-DEL-5"))
+        assert deleted.is_deleted is True
+        assert deleted.deleted_by == USER
+        assert deleted.deleted_at is not None
+
+        result = service.publish(
+            publish_payload({"sample_id": "SM-DEL-5", "is_deleted": False}), USER
+        )
+        assert result["errors"] == []
+        undeleted = service.find_by_id(sample_public_id("SM-DEL-5"))
+        assert undeleted.is_deleted is False
+        assert undeleted.deleted_by is None
+        assert undeleted.deleted_at is None
+
     def test_reports_unresolvable_mineral_site_id_as_error(self, service: SampleService):
         # Real FK enforcement is verified against live Postgres (issue #18), not
         # reproducible under SQLite -- see module docstring. This isolates publish()'s
@@ -346,3 +546,209 @@ class TestPublish:
         assert result["updated"] == []
         assert len(result["errors"]) == 1
         assert "site__does-not-exist" in result["errors"][0]["detail"]
+
+
+class TestSHACLValidation:
+    """SampleService.publish()'s SHACL gate (ta2-table-understanding issue #18):
+    validate_sample_shacl() is called on the fully-formed post-edit sample before
+    either create() or patch() persists anything -- a failure is a per-sample
+    errors[] entry, not a raised exception, and nothing is written to the DB.
+
+    Mocks minmodkg.services.sample.validate_sample_shacl directly rather than
+    exercising the real pyshacl/rdflib pipeline -- that pipeline is verified
+    separately (see tests/test_validators.py's real-shape-file checks); this
+    isolates publish()'s own wiring: does a failure block persistence, does a
+    pass go through unaffected, does the message reach errors[]."""
+
+    def test_shacl_failure_blocks_new_sample_creation(self, service: SampleService):
+        with patch(
+            "minmodkg.services.sample.validate_sample_shacl",
+            return_value=["missing required field X"],
+        ):
+            result = service.publish(
+                publish_payload({"sample_id": "SM-SHACL-1", "sample_name": "bad"}),
+                USER,
+            )
+        assert result["created"] == []
+        assert len(result["errors"]) == 1
+        assert "missing required field X" in result["errors"][0]["detail"]
+        assert service.find_by_id(sample_public_id("SM-SHACL-1")) is None
+
+    def test_shacl_failure_blocks_existing_sample_patch(self, service: SampleService):
+        created = service.create(
+            RelSample.from_dict(
+                {
+                    "public_id": "",
+                    "mineral_site_id": SITE_ID,
+                    "sample_id": "SM-SHACL-2",
+                    "description": "original",
+                    "modified_at": 0,
+                }
+            ),
+            USER,
+        )
+        with patch(
+            "minmodkg.services.sample.validate_sample_shacl",
+            return_value=["bad shape"],
+        ):
+            result = service.publish(
+                publish_payload({"sample_id": "SM-SHACL-2", "description": "SHOULD NOT PERSIST"}),
+                USER,
+            )
+        assert result["updated"] == []
+        assert len(result["errors"]) == 1
+        unchanged = service.find_by_id(sample_public_id("SM-SHACL-2"))
+        assert unchanged.description == "original"
+        assert unchanged.modified_at == created.modified_at
+
+    def test_shacl_pass_does_not_block_publish(self, service: SampleService):
+        with patch(
+            "minmodkg.services.sample.validate_sample_shacl", return_value=[]
+        ):
+            result = service.publish(
+                publish_payload({"sample_id": "SM-SHACL-3", "sample_name": "fine"}),
+                USER,
+            )
+        assert result["errors"] == []
+        assert len(result["created"]) == 1
+        assert service.find_by_id(sample_public_id("SM-SHACL-3")) is not None
+
+
+class TestBareUnitLabels:
+    """grade_unit/detection_limit_unit as a bare label/URI string (issue #18 §5)
+    -- previously crashed publish() with an uncaught AttributeError ('str'
+    object has no attribute 'get') in _validate_units, since it assumed every
+    caller still sent the older wrapped CandidateEntity shape. Reported
+    externally by Ryan (HMI) hitting exactly this on a real publish call."""
+
+    def test_bare_label_resolves_and_does_not_crash(self, service: SampleService):
+        result = service.publish(
+            publish_payload(
+                {
+                    "sample_id": "SM-UNIT-1",
+                    "analyses": [
+                        {
+                            "analysis_id": "A-1",
+                            "elements": [
+                                {"symbol": "Au", "grade": 2.5, "grade_unit": "g/t"}
+                            ],
+                        }
+                    ],
+                }
+            ),
+            USER,
+        )
+        assert result["errors"] == []
+        sample = service.find_by_id(sample_public_id("SM-UNIT-1"))
+        element = sample.analyses[0].elements[0]
+        assert element.grade_unit.normalized_uri == GOOD_UNIT
+        assert element.grade_unit.observed_name == "g/t"
+
+    def test_bare_label_matches_case_insensitively_by_name_or_alias(
+        self, service: SampleService
+    ):
+        result = service.publish(
+            publish_payload(
+                {
+                    "sample_id": "SM-UNIT-2",
+                    "analyses": [
+                        {
+                            "analysis_id": "A-1",
+                            "elements": [
+                                {
+                                    "symbol": "Au",
+                                    "grade": 2.5,
+                                    "grade_unit": "Grams Per Tonne",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            USER,
+        )
+        assert result["errors"] == []
+        sample = service.find_by_id(sample_public_id("SM-UNIT-2"))
+        assert sample.analyses[0].elements[0].grade_unit.normalized_uri == GOOD_UNIT
+
+    def test_bare_uri_is_accepted_directly(self, service: SampleService):
+        result = service.publish(
+            publish_payload(
+                {
+                    "sample_id": "SM-UNIT-3",
+                    "analyses": [
+                        {
+                            "analysis_id": "A-1",
+                            "elements": [
+                                {"symbol": "Au", "grade": 2.5, "grade_unit": GOOD_UNIT}
+                            ],
+                        }
+                    ],
+                }
+            ),
+            USER,
+        )
+        assert result["errors"] == []
+        sample = service.find_by_id(sample_public_id("SM-UNIT-3"))
+        assert sample.analyses[0].elements[0].grade_unit.normalized_uri == GOOD_UNIT
+
+    def test_unresolvable_bare_label_is_a_per_sample_error_not_a_crash(
+        self, service: SampleService
+    ):
+        result = service.publish(
+            publish_payload(
+                {
+                    "sample_id": "SM-UNIT-4",
+                    "analyses": [
+                        {
+                            "analysis_id": "A-1",
+                            "elements": [
+                                {
+                                    "symbol": "Au",
+                                    "grade": 2.5,
+                                    "grade_unit": "not-a-real-unit-label",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            USER,
+        )
+        assert result["created"] == []
+        assert len(result["errors"]) == 1
+        assert "not-a-real-unit-label" in result["errors"][0]["detail"]
+        assert service.find_by_id(sample_public_id("SM-UNIT-4")) is None
+
+    def test_old_wrapped_shape_still_works(self, service: SampleService):
+        """Backward compat: a caller that still sends the older wrapped
+        CandidateEntity shape directly (not a bare string) is left untouched by
+        _resolve_element_units and validated the same way as before."""
+        result = service.publish(
+            publish_payload(
+                {
+                    "sample_id": "SM-UNIT-5",
+                    "analyses": [
+                        {
+                            "analysis_id": "A-1",
+                            "elements": [
+                                {
+                                    "symbol": "Au",
+                                    "grade": 2.5,
+                                    "grade_unit": {
+                                        "observed_name": "g/t",
+                                        "confidence": 1.0,
+                                        "source": "test",
+                                        "normalized_uri": GOOD_UNIT,
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            USER,
+        )
+        assert result["errors"] == []
+        sample = service.find_by_id(sample_public_id("SM-UNIT-5"))
+        assert sample.analyses[0].elements[0].grade_unit.normalized_uri == GOOD_UNIT

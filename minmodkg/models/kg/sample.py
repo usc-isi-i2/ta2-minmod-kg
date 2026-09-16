@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING, Annotated, Optional
 
 from minmodkg.libraries.rdf.rdf_model import P, RDFModel, Subject
 from minmodkg.misc.utils import makedict
-from minmodkg.models.kg.base import NS_GCO, NS_GCR
+from minmodkg.models.kg.base import NS_GCO, NS_GCR, NS_MO
+from minmodkg.models.kg.location_info import LocationInfo
 from minmodkg.models.kg.reference import Reference
 from minmodkg.models.kg.sample_parts import Analysis, EditEvent, Element, Isotope
 from minmodkg.transformations import make_sample_id
-from minmodkg.typing import CleanedNotEmptyStr, InternalID
+from minmodkg.typing import IRI, CleanedNotEmptyStr, InternalID
 from rdflib import URIRef
 
 if TYPE_CHECKING:
@@ -76,6 +77,9 @@ class Sample(SampleIdent, RDFModel):
     sample_deposit_relation: Annotated[Optional[CleanedNotEmptyStr], P()] = None
     geological_province: Annotated[Optional[CleanedNotEmptyStr], P()] = None
     strat_unit_uid: Annotated[Optional[CleanedNotEmptyStr], P()] = None
+    # Free text as reported -- distinct from strat_unit_uid (a normalized
+    # identifier). Not a rename/replacement of it, see schema/geochem_v1.2.0.ttl.
+    strat_unit_name: Annotated[Optional[CleanedNotEmptyStr], P()] = None
     strat_grouping: Annotated[Optional[CleanedNotEmptyStr], P()] = None
     earth_material_group: Annotated[Optional[CleanedNotEmptyStr], P()] = None
     earth_material_qualifier: Annotated[Optional[CleanedNotEmptyStr], P()] = None
@@ -92,6 +96,18 @@ class Sample(SampleIdent, RDFModel):
     top_depth_m: Annotated[Optional[float], P()] = None
     bottom_depth_m: Annotated[Optional[float], P()] = None
     comments: Annotated[Optional[CleanedNotEmptyStr], P()] = None
+    # mo:location_info's domain widened to include :Sample (was mo:MineralSite
+    # only) -- a sample can be reported at a more precise point than its parent
+    # site. Reuses mo:LocationInfo as-is, same object MineralSite uses.
+    location_info: Annotated[
+        Optional[LocationInfo], P(pred=NS_MO.term("location_info"))
+    ] = None
+    # Soft-delete, same convention as Analysis/Element -- dedicated fields
+    # rather than reading off edit_history, so who/when-deleted stays uniform
+    # with MineralSite, which has no edit_history mechanism at all.
+    is_deleted: Annotated[bool, P()] = False
+    deleted_by: Annotated[Optional[IRI], P()] = None
+    deleted_at: Annotated[Optional[CleanedNotEmptyStr], P()] = None
 
     analyses: Annotated[list[Analysis], P(pred=NS_GCO.term("has_analysis"))] = field(
         default_factory=list
@@ -123,6 +139,7 @@ class Sample(SampleIdent, RDFModel):
                 ("sample_deposit_relation", self.sample_deposit_relation),
                 ("geological_province", self.geological_province),
                 ("strat_unit_uid", self.strat_unit_uid),
+                ("strat_unit_name", self.strat_unit_name),
                 ("strat_grouping", self.strat_grouping),
                 ("earth_material_group", self.earth_material_group),
                 ("earth_material_qualifier", self.earth_material_qualifier),
@@ -139,6 +156,13 @@ class Sample(SampleIdent, RDFModel):
                 ("top_depth_m", self.top_depth_m),
                 ("bottom_depth_m", self.bottom_depth_m),
                 ("comments", self.comments),
+                (
+                    "location_info",
+                    self.location_info.to_dict() if self.location_info else None,
+                ),
+                ("is_deleted", self.is_deleted),
+                ("deleted_by", self.deleted_by),
+                ("deleted_at", self.deleted_at),
                 ("analyses", [a.to_dict() for a in self.analyses]),
                 ("reference", [r.to_dict() for r in self.reference]),
                 ("edit_history", [e.to_dict() for e in self.edit_history]),
@@ -164,6 +188,7 @@ class Sample(SampleIdent, RDFModel):
             sample_deposit_relation=d.get("sample_deposit_relation"),
             geological_province=d.get("geological_province"),
             strat_unit_uid=d.get("strat_unit_uid"),
+            strat_unit_name=d.get("strat_unit_name"),
             strat_grouping=d.get("strat_grouping"),
             earth_material_group=d.get("earth_material_group"),
             earth_material_qualifier=d.get("earth_material_qualifier"),
@@ -180,6 +205,14 @@ class Sample(SampleIdent, RDFModel):
             top_depth_m=d.get("top_depth_m"),
             bottom_depth_m=d.get("bottom_depth_m"),
             comments=d.get("comments"),
+            location_info=(
+                LocationInfo.from_dict(d["location_info"])
+                if d.get("location_info")
+                else None
+            ),
+            is_deleted=d.get("is_deleted", False),
+            deleted_by=d.get("deleted_by"),
+            deleted_at=d.get("deleted_at"),
             analyses=[Analysis.from_dict(a) for a in d.get("analyses", [])],
             reference=[Reference.from_dict(r) for r in d.get("reference", [])],
             edit_history=[EditEvent.from_dict(e) for e in d.get("edit_history", [])],
@@ -204,6 +237,7 @@ class Sample(SampleIdent, RDFModel):
             sample_deposit_relation=sample.sample_deposit_relation,
             geological_province=sample.geological_province,
             strat_unit_uid=sample.strat_unit_uid,
+            strat_unit_name=sample.strat_unit_name,
             strat_grouping=sample.strat_grouping,
             earth_material_group=sample.earth_material_group,
             earth_material_qualifier=sample.earth_material_qualifier,
@@ -220,6 +254,12 @@ class Sample(SampleIdent, RDFModel):
             top_depth_m=sample.top_depth_m,
             bottom_depth_m=sample.bottom_depth_m,
             comments=sample.comments,
+            location_info=(
+                sample.location.to_kg() if sample.location is not None else None
+            ),
+            is_deleted=sample.is_deleted,
+            deleted_by=sample.deleted_by,
+            deleted_at=sample.deleted_at,
             analyses=sample.analyses,
             reference=sample.reference,
             edit_history=sample.edit_history,

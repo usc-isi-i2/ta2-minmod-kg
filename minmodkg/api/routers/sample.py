@@ -10,6 +10,7 @@ from minmodkg.services.sample import (
     ArgumentError,
     ExpiredSnapshotIdError,
     SampleNotFoundError,
+    SampleService,
 )
 from minmodkg.transformations import make_sample_id
 from minmodkg.typing import InternalID
@@ -162,20 +163,18 @@ def publish_paper(
 
 
 def _validate_patch_units(patch: dict):
-    units = EntityService.get_instance().get_unit_uris()
-    for a_i, a_patch in enumerate(patch.get("analyses", [])):
-        for e_i, e_patch in enumerate(a_patch.get("elements", [])):
-            for unit_field in ("grade_unit", "detection_limit_unit"):
-                unit = e_patch.get(unit_field)
-                if unit and unit.get("normalized_uri") is not None:
-                    if unit["normalized_uri"] not in units:
-                        raise HTTPException(
-                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail=(
-                                f"analyses[{a_i}].elements[{e_i}].{unit_field} has URI "
-                                f"'{unit['normalized_uri']}' which is not in the allowed set"
-                            ),
-                        )
+    """Mutates `patch` in place (see SampleService._resolve_element_units --
+    bare unit labels/URIs, issue #18 §5) then validates the resulting wrapped
+    shape's normalized_uri against known units. Delegates to SampleService's
+    own versions of both steps rather than keeping a second, easily-drifting
+    copy of this logic here."""
+    try:
+        SampleService._resolve_element_units(patch)
+        SampleService._validate_units(patch)
+    except ArgumentError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
 
 
 @router.post("/samples/validate")

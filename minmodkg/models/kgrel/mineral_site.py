@@ -179,6 +179,13 @@ class MineralSite(MappedAsDataclass, Base):
     mineral_form: Mapped[list[str]] = mapped_column(JSON)
     geology_info: Mapped[Optional[GeologyInfo]] = mapped_column()
     discovered_year: Mapped[int | None] = mapped_column()
+    # Soft-delete, same convention as Sample -- see schema/geochem_v1.2.0.ttl.
+    # No mapped_column default: created_by/modified_at below have none either,
+    # and MappedAsDataclass requires defaulted fields to come last, so every
+    # caller passes these explicitly (see from_raw_site, from_dict).
+    is_deleted: Mapped[bool] = mapped_column()
+    deleted_by: Mapped[str | None] = mapped_column()
+    deleted_at: Mapped[str | None] = mapped_column()
 
     created_by: Mapped[IRI] = mapped_column()
     # timestamp in nano seconds
@@ -234,6 +241,9 @@ class MineralSite(MappedAsDataclass, Base):
             geology_info=site.geology_info,
             mineral_form=site.mineral_form,
             discovered_year=site.discovered_year,
+            is_deleted=site.is_deleted,
+            deleted_by=site.deleted_by,
+            deleted_at=site.deleted_at,
             inventories=site.mineral_inventory,
             reference=site.reference,
             created_by=site.created_by,
@@ -287,6 +297,9 @@ class MineralSite(MappedAsDataclass, Base):
                 ),
                 ("mineral_form", self.mineral_form),
                 ("discovered_year", self.discovered_year),
+                ("is_deleted", self.is_deleted),
+                ("deleted_by", self.deleted_by),
+                ("deleted_at", self.deleted_at),
                 ("created_by", self.created_by),
                 ("modified_at", self.modified_at),
             )
@@ -320,6 +333,9 @@ class MineralSite(MappedAsDataclass, Base):
             ),
             mineral_form=d.get("mineral_form", []),
             discovered_year=d.get("discovered_year"),
+            is_deleted=d.get("is_deleted", False),
+            deleted_by=d.get("deleted_by"),
+            deleted_at=d.get("deleted_at"),
             reference=[Reference.from_dict(x) for x in d.get("reference", [])],
             created_by=d["created_by"],
             modified_at=d["modified_at"],
@@ -347,6 +363,9 @@ class MineralSite(MappedAsDataclass, Base):
             mineral_inventory=self.inventories,
             reference=self.reference,
             discovered_year=self.discovered_year,
+            is_deleted=self.is_deleted,
+            deleted_by=self.deleted_by,
+            deleted_at=self.deleted_at,
             created_by=self.created_by,
             modified_at=format_nanoseconds(self.modified_at),
         )

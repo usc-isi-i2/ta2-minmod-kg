@@ -6,6 +6,7 @@ from typing import Optional
 from minmodkg.misc.utils import format_nanoseconds, makedict
 from minmodkg.models.kg.reference import Reference
 from minmodkg.models.kg.sample import Analysis, EditEvent
+from minmodkg.models.kgrel.custom_types import Location
 from minmodkg.models.kgrel.sample import Sample as RelSample
 from minmodkg.typing import InternalID
 from pydantic import BaseModel, Field
@@ -29,6 +30,7 @@ class OutputPublicSample(BaseModel):
     sample_deposit_relation: Optional[str] = None
     geological_province: Optional[str] = None
     strat_unit_uid: Optional[str] = None
+    strat_unit_name: Optional[str] = None
     strat_grouping: Optional[str] = None
     earth_material_group: Optional[str] = None
     earth_material_qualifier: Optional[str] = None
@@ -45,6 +47,10 @@ class OutputPublicSample(BaseModel):
     top_depth_m: Optional[float] = None
     bottom_depth_m: Optional[float] = None
     comments: Optional[str] = None
+    location: Optional[Location] = None
+    is_deleted: bool = False
+    deleted_by: Optional[str] = None
+    deleted_at: Optional[str] = None
 
     analyses: list[Analysis] = Field(default_factory=list)
     reference: list[Reference] = Field(default_factory=list)
@@ -77,6 +83,7 @@ class OutputPublicSample(BaseModel):
             sample_deposit_relation=sample.sample_deposit_relation,
             geological_province=sample.geological_province,
             strat_unit_uid=sample.strat_unit_uid,
+            strat_unit_name=sample.strat_unit_name,
             strat_grouping=sample.strat_grouping,
             earth_material_group=sample.earth_material_group,
             earth_material_qualifier=sample.earth_material_qualifier,
@@ -93,6 +100,10 @@ class OutputPublicSample(BaseModel):
             top_depth_m=sample.top_depth_m,
             bottom_depth_m=sample.bottom_depth_m,
             comments=sample.comments,
+            location=sample.location,
+            is_deleted=sample.is_deleted,
+            deleted_by=sample.deleted_by,
+            deleted_at=sample.deleted_at,
             analyses=sample.analyses,
             reference=sample.reference,
             edit_history=sample.edit_history,
@@ -130,6 +141,7 @@ class InputPublicSample:
     sample_deposit_relation: Optional[str] = None
     geological_province: Optional[str] = None
     strat_unit_uid: Optional[str] = None
+    strat_unit_name: Optional[str] = None
     strat_grouping: Optional[str] = None
     earth_material_group: Optional[str] = None
     earth_material_qualifier: Optional[str] = None
@@ -146,6 +158,10 @@ class InputPublicSample:
     top_depth_m: Optional[float] = None
     bottom_depth_m: Optional[float] = None
     comments: Optional[str] = None
+    location: Optional[Location] = None
+    # deleted_by/deleted_at are never accepted from the client -- server-derived
+    # by SampleService.create()/update(), same convention as edit_history above.
+    is_deleted: bool = False
 
     analyses: list[Analysis] = field(default_factory=list)
     reference: list[Reference] = field(default_factory=list)
@@ -169,6 +185,7 @@ class InputPublicSample:
                 ("sample_deposit_relation", self.sample_deposit_relation),
                 ("geological_province", self.geological_province),
                 ("strat_unit_uid", self.strat_unit_uid),
+                ("strat_unit_name", self.strat_unit_name),
                 ("strat_grouping", self.strat_grouping),
                 ("earth_material_group", self.earth_material_group),
                 ("earth_material_qualifier", self.earth_material_qualifier),
@@ -185,6 +202,11 @@ class InputPublicSample:
                 ("top_depth_m", self.top_depth_m),
                 ("bottom_depth_m", self.bottom_depth_m),
                 ("comments", self.comments),
+                (
+                    "location",
+                    self.location.to_dict() if self.location is not None else None,
+                ),
+                ("is_deleted", self.is_deleted),
                 ("analyses", [a.to_dict() for a in self.analyses]),
                 ("reference", [r.to_dict() for r in self.reference]),
             )
@@ -209,6 +231,7 @@ class InputPublicSample:
             sample_deposit_relation=d.get("sample_deposit_relation"),
             geological_province=d.get("geological_province"),
             strat_unit_uid=d.get("strat_unit_uid"),
+            strat_unit_name=d.get("strat_unit_name"),
             strat_grouping=d.get("strat_grouping"),
             earth_material_group=d.get("earth_material_group"),
             earth_material_qualifier=d.get("earth_material_qualifier"),
@@ -225,6 +248,8 @@ class InputPublicSample:
             top_depth_m=d.get("top_depth_m"),
             bottom_depth_m=d.get("bottom_depth_m"),
             comments=d.get("comments"),
+            location=Location.from_dict(d["location"]) if d.get("location") else None,
+            is_deleted=d.get("is_deleted", False),
             analyses=[Analysis.from_dict(a) for a in d.get("analyses", [])],
             reference=[Reference.from_dict(r) for r in d.get("reference", [])],
         )
@@ -253,6 +278,7 @@ class InputPublicSample:
             sample_deposit_relation=self.sample_deposit_relation,
             geological_province=self.geological_province,
             strat_unit_uid=self.strat_unit_uid,
+            strat_unit_name=self.strat_unit_name,
             strat_grouping=self.strat_grouping,
             earth_material_group=self.earth_material_group,
             earth_material_qualifier=self.earth_material_qualifier,
@@ -269,6 +295,12 @@ class InputPublicSample:
             top_depth_m=self.top_depth_m,
             bottom_depth_m=self.bottom_depth_m,
             comments=self.comments,
+            location=self.location,
+            # deleted_by/deleted_at are placeholders -- SampleService.create()/
+            # update() stamp the real values from is_deleted (see _stamp_deletion).
+            is_deleted=self.is_deleted,
+            deleted_by=None,
+            deleted_at=None,
             analyses=self.analyses,
             reference=self.reference,
             edit_history=[],

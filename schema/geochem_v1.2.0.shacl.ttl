@@ -1,0 +1,775 @@
+@prefix :     <https://geochemistry.isi.edu/ontology/> .
+@prefix mo:   <https://minmod.isi.edu/ontology/> .
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix geo:  <http://www.opengis.net/ont/geosparql#> .
+
+@base <https://geochemistry.isi.edu/ontology/> .
+
+<https://geochemistry.isi.edu/ontology/shacl> rdf:type owl:Ontology ;
+    rdfs:comment "SHACL shapes for the GeoChem ontology (geochem_v1.2.0.ttl)"@en ;
+    owl:versionInfo "1.2.0" ;
+    owl:imports <https://geochemistry.isi.edu/ontology/> .
+
+
+#################################################################
+#    MineralResourcePaper
+#################################################################
+
+:MineralResourcePaperShape rdf:type sh:NodeShape ;
+    sh:targetClass :MineralResourcePaper ;
+    sh:name "Mineral Resource Paper" ;
+
+    # Recommended: at least title or DOI to identify the paper
+    sh:sparql [
+        sh:message "A MineralResourcePaper should have at least a paper_title or paper_doi" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/paper_title> ?t }
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/paper_doi> ?d }
+            }
+        """ ;
+    ] ;
+
+    sh:property [
+        sh:path :paper_title ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "paper title" ;
+    ] ;
+    sh:property [
+        sh:path :paper_doi ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "paper doi" ;
+    ] ;
+    sh:property [
+        sh:path :paper_year ;
+        sh:datatype xsd:integer ;
+        sh:maxCount 1 ;
+        sh:minInclusive 1000 ;
+        sh:maxInclusive 9999 ;
+        sh:name "paper year" ;
+    ] ;
+    sh:property [
+        sh:path :paper_journal ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "paper journal" ;
+    ] ;
+    sh:property [
+        sh:path :paper_authors ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "paper authors" ;
+    ] ;
+    sh:property [
+        sh:path :paper_url ;
+        sh:datatype xsd:anyURI ;
+        sh:maxCount 1 ;
+        sh:name "paper url" ;
+    ] ;
+    sh:property [
+        sh:path :has_mineral_site ;
+        sh:class mo:MineralSite ;
+        sh:minCount 1 ;
+        sh:severity sh:Warning ;
+        sh:message "A MineralResourcePaper should link to at least one mo:MineralSite via :has_mineral_site" ;
+        sh:name "has mineral site" ;
+    ] .
+
+
+#################################################################
+#    Sample
+#################################################################
+
+:SampleShape rdf:type sh:NodeShape ;
+    sh:targetClass :Sample ;
+    sh:name "Sample" ;
+
+    # Recommended: at least one identifier
+    sh:sparql [
+        sh:message "A Sample should have at least a sample_id or sample_name" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/sample_id> ?id }
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/sample_name> ?n }
+            }
+        """ ;
+    ] ;
+
+    # Recommended: depth fields should appear together
+    sh:sparql [
+        sh:message "top_depth_m and bottom_depth_m should be specified together" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                { $this <https://geochemistry.isi.edu/ontology/top_depth_m> ?d
+                  FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/bottom_depth_m> ?b } }
+                UNION
+                { $this <https://geochemistry.isi.edu/ontology/bottom_depth_m> ?b
+                  FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/top_depth_m> ?d } }
+            }
+        """ ;
+    ] ;
+
+    sh:property [
+        sh:path :sample_id ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "sample id" ;
+    ] ;
+    sh:property [
+        sh:path :sample_name ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "sample name" ;
+    ] ;
+    sh:property [
+        sh:path :sample_local_id ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "sample local id" ;
+    ] ;
+    sh:property [
+        sh:path :sample_type ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "sample type" ;
+    ] ;
+    sh:property [
+        sh:path :collection_date ;
+        sh:datatype xsd:date ;
+        sh:maxCount 1 ;
+        sh:name "collection date" ;
+    ] ;
+    sh:property [
+        sh:path :description ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "description" ;
+    ] ;
+    sh:property [
+        sh:path :mineral ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "mineral" ;
+    ] ;
+    sh:property [
+        sh:path :has_analysis ;
+        sh:class :Analysis ;
+        sh:minCount 1 ;
+        sh:severity sh:Warning ;
+        sh:message "A Sample should have at least one Analysis via :has_analysis" ;
+        sh:name "has analysis" ;
+    ] ;
+    sh:property [
+        sh:path :reference ;
+        sh:class mo:Reference ;
+        sh:name "reference" ;
+    ] ;
+    sh:property [
+        sh:path :sampling_method ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "sampling method" ;
+    ] ;
+    sh:property [
+        sh:path :sample_preparation ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "sample preparation" ;
+    ] ;
+    sh:property [
+        sh:path :material_class ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "material class" ;
+    ] ;
+    sh:property [
+        sh:path :material_class_comment ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "material class comment" ;
+    ] ;
+    sh:property [
+        sh:path :analysed_material ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "analysed material" ;
+    ] ;
+    sh:property [
+        sh:path :sample_deposit_relation ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "sample deposit relation" ;
+    ] ;
+    sh:property [
+        sh:path :geological_province ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "geological province" ;
+    ] ;
+    sh:property [
+        sh:path :strat_unit_uid ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "stratigraphic unit uid" ;
+    ] ;
+    sh:property [
+        sh:path :strat_grouping ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "stratigraphic grouping" ;
+    ] ;
+    sh:property [
+        sh:path :earth_material_group ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "earth material group" ;
+    ] ;
+    sh:property [
+        sh:path :earth_material_qualifier ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "earth material qualifier" ;
+    ] ;
+    sh:property [
+        sh:path :mode_occurrence ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "mode of occurrence" ;
+    ] ;
+    sh:property [
+        sh:path :metamorphic_grade ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "metamorphic grade" ;
+    ] ;
+    sh:property [
+        sh:path :alteration ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "alteration" ;
+    ] ;
+    sh:property [
+        sh:path :paragenetic_stage ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "paragenetic stage" ;
+    ] ;
+    sh:property [
+        sh:path :texture ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "texture" ;
+    ] ;
+    sh:property [
+        sh:path :color ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "color" ;
+    ] ;
+    sh:property [
+        sh:path :associated_minerals ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "associated minerals" ;
+    ] ;
+    sh:property [
+        sh:path :feature_type ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "feature type" ;
+    ] ;
+    sh:property [
+        sh:path :feature_name ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "feature name" ;
+    ] ;
+    sh:property [
+        sh:path :feature_local_uid ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "feature local uid" ;
+    ] ;
+    sh:property [
+        sh:path :top_depth_m ;
+        sh:datatype xsd:decimal ;
+        sh:maxCount 1 ;
+        sh:name "top depth m" ;
+    ] ;
+    sh:property [
+        sh:path :bottom_depth_m ;
+        sh:datatype xsd:decimal ;
+        sh:maxCount 1 ;
+        sh:name "bottom depth m" ;
+    ] ;
+    sh:property [
+        sh:path :comments ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "comments" ;
+    ] .
+
+
+#################################################################
+#    Analysis
+#################################################################
+
+:AnalysisShape rdf:type sh:NodeShape ;
+    sh:targetClass :Analysis ;
+    sh:name "Analysis" ;
+
+    # Recommended: at least one of element or isotope
+    sh:sparql [
+        sh:message "An Analysis should reference at least one :element or :isotope" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/element> ?e }
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/isotope> ?i }
+            }
+        """ ;
+    ] ;
+
+    sh:property [
+        sh:path :element ;
+        sh:class :Element ;
+        sh:name "element" ;
+    ] ;
+    sh:property [
+        sh:path :isotope ;
+        sh:class :Isotope ;
+        sh:name "isotope" ;
+    ] ;
+    sh:property [
+        sh:path :analysis_id ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "analysis id" ;
+    ] ;
+    sh:property [
+        sh:path :analytical_method ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "analytical method" ;
+    ] ;
+    sh:property [
+        sh:path :aggregation_method ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "aggregation method" ;
+    ] ;
+    sh:property [
+        sh:path :instrument_type ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "instrument type" ;
+    ] ;
+    sh:property [
+        sh:path :laboratory_location ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "laboratory location" ;
+    ] ;
+    sh:property [
+        sh:path :operating_conditions ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "operating conditions" ;
+    ] ;
+    sh:property [
+        sh:path :standards_used ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "standards used" ;
+    ] ;
+    sh:property [
+        sh:path :data_quality ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "data quality" ;
+    ] ;
+    sh:property [
+        sh:path :analysis_date ;
+        sh:datatype xsd:dateTime ;
+        sh:maxCount 1 ;
+        sh:name "analysis date" ;
+    ] ;
+    sh:property [
+        sh:path :reference ;
+        sh:class mo:Reference ;
+        sh:name "reference" ;
+    ] .
+
+
+#################################################################
+#    Element
+#################################################################
+
+:ElementShape rdf:type sh:NodeShape ;
+    sh:targetClass :Element ;
+    sh:name "Element" ;
+
+    # Recommended: detection_limit_unit should accompany detection_limit
+    sh:sparql [
+        sh:message "If :detection_limit is specified, :detection_limit_unit should also be specified" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                $this <https://geochemistry.isi.edu/ontology/detection_limit> ?dl .
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/detection_limit_unit> ?u }
+            }
+        """ ;
+    ] ;
+
+    # Recommended: grade_unit should accompany grade
+    sh:sparql [
+        sh:message "If :grade is specified, :grade_unit should also be specified" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                $this <https://geochemistry.isi.edu/ontology/grade> ?g .
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/grade_unit> ?u }
+            }
+        """ ;
+    ] ;
+
+    sh:property [
+        sh:path rdfs:label ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "An Element must have an rdfs:label (e.g., the element symbol or name)" ;
+        sh:name "label" ;
+    ] ;
+    sh:property [
+        sh:path :grade ;
+        sh:datatype xsd:decimal ;
+        sh:maxCount 1 ;
+        sh:name "grade" ;
+    ] ;
+    sh:property [
+        sh:path :grade_unit ;
+        sh:class mo:UnitCandidate ;
+        sh:maxCount 1 ;
+        sh:name "grade unit" ;
+    ] ;
+    sh:property [
+        sh:path :detection_limit ;
+        sh:datatype xsd:decimal ;
+        sh:maxCount 1 ;
+        sh:name "detection limit" ;
+    ] ;
+    sh:property [
+        sh:path :detection_limit_unit ;
+        sh:class mo:UnitCandidate ;
+        sh:maxCount 1 ;
+        sh:name "detection limit unit" ;
+    ] ;
+    sh:property [
+        sh:path :reference ;
+        sh:class mo:Reference ;
+        sh:name "reference" ;
+    ] .
+
+
+#################################################################
+#    Isotope
+#################################################################
+
+:IsotopeShape rdf:type sh:NodeShape ;
+    sh:targetClass :Isotope ;
+    sh:name "Isotope" ;
+
+    sh:property [
+        sh:path rdfs:label ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "An Isotope must have an rdfs:label (e.g., '206Pb')" ;
+        sh:name "label" ;
+    ] .
+
+
+#################################################################
+#    MinMod classes reused directly by geochem geolocation data
+#################################################################
+
+:CandidateEntityShape rdf:type sh:NodeShape ;
+    sh:targetClass mo:CandidateEntity ;
+    sh:name "CandidateEntity" ;
+
+    sh:property [
+        sh:path mo:source ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:name "source" ;
+    ] ;
+    sh:property [
+        sh:path mo:confidence ;
+        sh:datatype xsd:decimal ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 1 ;
+        sh:name "confidence" ;
+    ] ;
+    sh:property [
+        sh:path mo:observed_name ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "observed name" ;
+    ] ;
+    sh:property [
+        sh:path mo:normalized_uri ;
+        sh:nodeKind sh:IRI ;
+        sh:maxCount 1 ;
+        sh:name "normalized uri" ;
+    ] .
+
+
+:LocationInfoShape rdf:type sh:NodeShape ;
+    sh:targetClass mo:LocationInfo ;
+    sh:name "LocationInfo" ;
+
+    # Longitude/latitude of a POINT geometry must be within physical range.
+    # Scoped to POINT only (mo:location also permits polygons, not checked here).
+    sh:sparql [
+        sh:message "mo:location POINT longitude must be in [-180,180] and latitude in [-90,90]" ;
+        sh:select """
+            PREFIX mo: <https://minmod.isi.edu/ontology/>
+            SELECT $this WHERE {
+                $this mo:location ?loc .
+                FILTER(REGEX(STR(?loc), "^POINT\\\\s*\\\\("))
+                BIND(REPLACE(REPLACE(STR(?loc), "^POINT\\\\s*\\\\(\\\\s*", ""), "\\\\s*\\\\)\\\\s*$", "") AS ?coords)
+                BIND(STRBEFORE(?coords, " ") AS ?lonStr)
+                BIND(STRAFTER(?coords, " ") AS ?latStr)
+                BIND(xsd:double(?lonStr) AS ?lon)
+                BIND(xsd:double(?latStr) AS ?lat)
+                FILTER(
+                    !BOUND(?lon) || !BOUND(?lat) ||
+                    ?lon < -180.0 || ?lon > 180.0 ||
+                    ?lat < -90.0 || ?lat > 90.0
+                )
+            }
+        """ ;
+    ] ;
+
+    sh:property [
+        sh:path mo:location ;
+        sh:datatype geo:wktLiteral ;
+        sh:maxCount 1 ;
+        sh:name "location" ;
+    ] ;
+    sh:property [
+        sh:path mo:country ;
+        sh:class mo:CandidateEntity ;
+        sh:name "country" ;
+    ] ;
+    sh:property [
+        sh:path mo:state_or_province ;
+        sh:class mo:CandidateEntity ;
+        sh:name "state or province" ;
+    ] ;
+    sh:property [
+        sh:path mo:crs ;
+        sh:class mo:CandidateEntity ;
+        sh:maxCount 1 ;
+        sh:name "crs" ;
+    ] ;
+    sh:property [
+        sh:path mo:location_source ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "location source" ;
+    ] ;
+    sh:property [
+        sh:path mo:location_description ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "location description" ;
+    ] ;
+    sh:property [
+        sh:path :reference ;
+        sh:class mo:Reference ;
+        sh:name "reference" ;
+    ] .
+
+
+#################################################################
+#    GeoChem extensions to MinMod classes
+#    Properties in : namespace with domains on mo: classes
+#################################################################
+
+:MineralSiteGeochemShape rdf:type sh:NodeShape ;
+    sh:targetClass mo:MineralSite ;
+    sh:name "MineralSite (GeoChem extensions)" ;
+
+    sh:property [
+        sh:path :row_index ;
+        sh:datatype xsd:integer ;
+        sh:maxCount 1 ;
+        sh:minInclusive 0 ;
+        sh:name "row index" ;
+    ] ;
+    sh:property [
+        sh:path :has_sample ;
+        sh:class :Sample ;
+        sh:name "has sample" ;
+    ] .
+
+
+:ReferenceGeochemShape rdf:type sh:NodeShape ;
+    sh:targetClass mo:Reference ;
+    sh:name "Reference (GeoChem extensions)" ;
+
+    # Recommended: mo:page_info (PDF) and :artifact_info (non-PDF) are alternative locators
+    sh:sparql [
+        sh:message "A Reference should not combine mo:page_info (PDF locator) with :artifact_info (non-PDF locator)" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                $this <https://minmod.isi.edu/ontology/page_info> ?p .
+                $this <https://geochemistry.isi.edu/ontology/artifact_info> ?a .
+            }
+        """ ;
+    ] ;
+
+    sh:property [
+        sh:path :evidence_quote ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "evidence quote" ;
+    ] ;
+    sh:property [
+        sh:path :evidence_confidence ;
+        sh:datatype xsd:decimal ;
+        sh:maxCount 1 ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 1 ;
+        sh:name "evidence confidence" ;
+    ] ;
+    sh:property [
+        sh:path :candidate_confidence ;
+        sh:datatype xsd:decimal ;
+        sh:maxCount 1 ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 1 ;
+        sh:name "candidate confidence" ;
+    ] ;
+    sh:property [
+        sh:path :extraction_backend ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "extraction backend" ;
+    ] ;
+    sh:property [
+        sh:path :extraction_confidence ;
+        sh:datatype xsd:decimal ;
+        sh:maxCount 1 ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 1 ;
+        sh:name "extraction confidence" ;
+    ] ;
+    sh:property [
+        sh:path :paper_id ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "paper id" ;
+    ] ;
+    sh:property [
+        sh:path :artifact_info ;
+        sh:class :ArtifactInfo ;
+        sh:maxCount 1 ;
+        sh:name "artifact info" ;
+    ] .
+
+
+###  ArtifactInfo hierarchy
+
+:ArtifactInfoShape rdf:type sh:NodeShape ;
+    sh:targetClass :ArtifactInfo ;
+    sh:name "ArtifactInfo" ;
+
+    sh:property [
+        sh:path :artifact_path ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "artifact path" ;
+    ] .
+
+
+:TableArtifactInfoShape rdf:type sh:NodeShape ;
+    sh:targetClass :TableArtifactInfo ;
+    sh:name "TableArtifactInfo" ;
+
+    # Recommended: table_row and table_col should appear together
+    sh:sparql [
+        sh:message "table_row and table_col should be specified together" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                { $this <https://geochemistry.isi.edu/ontology/table_row> ?r
+                  FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/table_col> ?c } }
+                UNION
+                { $this <https://geochemistry.isi.edu/ontology/table_col> ?c
+                  FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/table_row> ?r } }
+            }
+        """ ;
+    ] ;
+
+    sh:property [
+        sh:path :table_id ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "table id" ;
+    ] ;
+    sh:property [
+        sh:path :table_row ;
+        sh:datatype xsd:integer ;
+        sh:maxCount 1 ;
+        sh:minInclusive 0 ;
+        sh:name "table row" ;
+    ] ;
+    sh:property [
+        sh:path :table_col ;
+        sh:datatype xsd:integer ;
+        sh:maxCount 1 ;
+        sh:minInclusive 0 ;
+        sh:name "table column" ;
+    ] .
+
+
+:ExcelArtifactInfoShape rdf:type sh:NodeShape ;
+    sh:targetClass :ExcelArtifactInfo ;
+    sh:name "ExcelArtifactInfo" ;
+
+    sh:property [
+        sh:path :sheet_name ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:minCount 1 ;
+        sh:name "sheet name" ;
+    ] .
+
+
+:JsonArtifactInfoShape rdf:type sh:NodeShape ;
+    sh:targetClass :JsonArtifactInfo ;
+    sh:name "JsonArtifactInfo" ;
+
+    sh:property [
+        sh:path :json_path ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:minCount 1 ;
+        sh:name "json path" ;
+    ] .
+
+

@@ -8,6 +8,7 @@ from minmodkg.models.kg.reference import Reference
 from minmodkg.models.kg.sample import Analysis, EditEvent
 from minmodkg.models.kg.sample import Sample as KGSample
 from minmodkg.models.kgrel.base import Base
+from minmodkg.models.kgrel.custom_types import Location
 from minmodkg.typing import InternalID
 from sqlalchemy import BigInteger, ForeignKey
 from sqlalchemy.orm import Mapped, MappedAsDataclass, mapped_column
@@ -53,6 +54,9 @@ class Sample(MappedAsDataclass, Base):
     sample_deposit_relation: Mapped[str | None] = mapped_column()
     geological_province: Mapped[str | None] = mapped_column()
     strat_unit_uid: Mapped[str | None] = mapped_column()
+    # Free text as reported -- distinct from strat_unit_uid (a normalized
+    # identifier), not a rename/replacement of it.
+    strat_unit_name: Mapped[str | None] = mapped_column()
     strat_grouping: Mapped[str | None] = mapped_column()
     earth_material_group: Mapped[str | None] = mapped_column()
     earth_material_qualifier: Mapped[str | None] = mapped_column()
@@ -69,6 +73,19 @@ class Sample(MappedAsDataclass, Base):
     top_depth_m: Mapped[float | None] = mapped_column()
     bottom_depth_m: Mapped[float | None] = mapped_column()
     comments: Mapped[str | None] = mapped_column()
+    # mo:location_info widened to :Sample -- see schema/geochem_v1.2.0.ttl. No
+    # location_view flattened copy (unlike MineralSite) -- nothing queries
+    # sample-level location by bounding box yet; add one if that need shows up.
+    location: Mapped[Location | None] = mapped_column()
+    # Soft-delete -- see is_deleted's own ontology comment for why deleted_by/
+    # deleted_at are dedicated fields rather than read off edit_history. No
+    # mapped_column default: analyses/reference/edit_history/modified_at below
+    # have none either, and MappedAsDataclass requires defaulted fields to
+    # come last, so every caller passes these explicitly (see from_raw_sample,
+    # from_dict).
+    is_deleted: Mapped[bool] = mapped_column()
+    deleted_by: Mapped[str | None] = mapped_column()
+    deleted_at: Mapped[str | None] = mapped_column()
 
     analyses: Mapped[list[Analysis]] = mapped_column()
     reference: Mapped[list[Reference]] = mapped_column()
@@ -101,6 +118,7 @@ class Sample(MappedAsDataclass, Base):
             sample_deposit_relation=self.sample_deposit_relation,
             geological_province=self.geological_province,
             strat_unit_uid=self.strat_unit_uid,
+            strat_unit_name=self.strat_unit_name,
             strat_grouping=self.strat_grouping,
             earth_material_group=self.earth_material_group,
             earth_material_qualifier=self.earth_material_qualifier,
@@ -117,6 +135,10 @@ class Sample(MappedAsDataclass, Base):
             top_depth_m=self.top_depth_m,
             bottom_depth_m=self.bottom_depth_m,
             comments=self.comments,
+            location_info=self.location.to_kg() if self.location is not None else None,
+            is_deleted=self.is_deleted,
+            deleted_by=self.deleted_by,
+            deleted_at=self.deleted_at,
             analyses=self.analyses,
             reference=self.reference,
             edit_history=self.edit_history,
@@ -129,6 +151,14 @@ class Sample(MappedAsDataclass, Base):
             if isinstance(raw_sample, dict)
             else raw_sample
         )
+        location = None
+        if sample.location_info is not None:
+            location = Location(
+                country=sample.location_info.country,
+                state_or_province=sample.location_info.state_or_province,
+                crs=sample.location_info.crs,
+                coordinates=sample.location_info.location,
+            )
         return Sample(
             public_id=sample.id,
             mineral_site_id=sample.mineral_site_id,
@@ -147,6 +177,7 @@ class Sample(MappedAsDataclass, Base):
             sample_deposit_relation=sample.sample_deposit_relation,
             geological_province=sample.geological_province,
             strat_unit_uid=sample.strat_unit_uid,
+            strat_unit_name=sample.strat_unit_name,
             strat_grouping=sample.strat_grouping,
             earth_material_group=sample.earth_material_group,
             earth_material_qualifier=sample.earth_material_qualifier,
@@ -163,6 +194,10 @@ class Sample(MappedAsDataclass, Base):
             top_depth_m=sample.top_depth_m,
             bottom_depth_m=sample.bottom_depth_m,
             comments=sample.comments,
+            location=location,
+            is_deleted=sample.is_deleted,
+            deleted_by=sample.deleted_by,
+            deleted_at=sample.deleted_at,
             analyses=sample.analyses,
             reference=sample.reference,
             edit_history=sample.edit_history,
@@ -190,6 +225,7 @@ class Sample(MappedAsDataclass, Base):
                 ("sample_deposit_relation", self.sample_deposit_relation),
                 ("geological_province", self.geological_province),
                 ("strat_unit_uid", self.strat_unit_uid),
+                ("strat_unit_name", self.strat_unit_name),
                 ("strat_grouping", self.strat_grouping),
                 ("earth_material_group", self.earth_material_group),
                 ("earth_material_qualifier", self.earth_material_qualifier),
@@ -206,6 +242,13 @@ class Sample(MappedAsDataclass, Base):
                 ("top_depth_m", self.top_depth_m),
                 ("bottom_depth_m", self.bottom_depth_m),
                 ("comments", self.comments),
+                (
+                    "location",
+                    self.location.to_dict() if self.location is not None else None,
+                ),
+                ("is_deleted", self.is_deleted),
+                ("deleted_by", self.deleted_by),
+                ("deleted_at", self.deleted_at),
                 ("analyses", [a.to_dict() for a in self.analyses]),
                 ("reference", [r.to_dict() for r in self.reference]),
                 ("edit_history", [e.to_dict() for e in self.edit_history]),
@@ -233,6 +276,7 @@ class Sample(MappedAsDataclass, Base):
             sample_deposit_relation=d.get("sample_deposit_relation"),
             geological_province=d.get("geological_province"),
             strat_unit_uid=d.get("strat_unit_uid"),
+            strat_unit_name=d.get("strat_unit_name"),
             strat_grouping=d.get("strat_grouping"),
             earth_material_group=d.get("earth_material_group"),
             earth_material_qualifier=d.get("earth_material_qualifier"),
@@ -249,6 +293,10 @@ class Sample(MappedAsDataclass, Base):
             top_depth_m=d.get("top_depth_m"),
             bottom_depth_m=d.get("bottom_depth_m"),
             comments=d.get("comments"),
+            location=Location.from_dict(d["location"]) if d.get("location") else None,
+            is_deleted=d.get("is_deleted", False),
+            deleted_by=d.get("deleted_by"),
+            deleted_at=d.get("deleted_at"),
             analyses=[Analysis.from_dict(a) for a in d.get("analyses", [])],
             reference=[Reference.from_dict(r) for r in d.get("reference", [])],
             edit_history=[EditEvent.from_dict(e) for e in d.get("edit_history", [])],

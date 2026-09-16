@@ -31,6 +31,13 @@ class Element(RDFModel):
     grade_unit: Annotated[Optional[CandidateEntity], P()] = None
     detection_limit: Annotated[Optional[float], P()] = None
     detection_limit_unit: Annotated[Optional[CandidateEntity], P()] = None
+    # Soft-delete: never removed, just flagged. deleted_by/deleted_at are
+    # server-derived, same convention as EditEvent.updated_by/updated_at --
+    # dedicated fields rather than edit_history since Element has no history
+    # mechanism of its own to read them off.
+    is_deleted: Annotated[bool, P()] = False
+    deleted_by: Annotated[Optional[IRI], P()] = None
+    deleted_at: Annotated[Optional[CleanedNotEmptyStr], P()] = None
 
     def to_dict(self):
         return makedict.without_none(
@@ -50,6 +57,9 @@ class Element(RDFModel):
                         else None
                     ),
                 ),
+                ("is_deleted", self.is_deleted),
+                ("deleted_by", self.deleted_by),
+                ("deleted_at", self.deleted_at),
             )
         )
 
@@ -69,6 +79,9 @@ class Element(RDFModel):
                 if d.get("detection_limit_unit")
                 else None
             ),
+            is_deleted=d.get("is_deleted", False),
+            deleted_by=d.get("deleted_by"),
+            deleted_at=d.get("deleted_at"),
         )
 
 
@@ -106,6 +119,11 @@ class Analysis(RDFModel):
     isotopes: Annotated[list[Isotope], P(pred=NS_GCO.term("isotope"))] = field(
         default_factory=list
     )
+    # Soft-delete, same convention as Element -- see its own fields for why
+    # these are dedicated rather than read off edit_history.
+    is_deleted: Annotated[bool, P()] = False
+    deleted_by: Annotated[Optional[IRI], P()] = None
+    deleted_at: Annotated[Optional[CleanedNotEmptyStr], P()] = None
 
     def to_dict(self):
         return makedict.without_none_or_empty_list(
@@ -121,6 +139,9 @@ class Analysis(RDFModel):
                 ("analysis_date", self.analysis_date),
                 ("elements", [e.to_dict() for e in self.elements]),
                 ("isotopes", [i.to_dict() for i in self.isotopes]),
+                ("is_deleted", self.is_deleted),
+                ("deleted_by", self.deleted_by),
+                ("deleted_at", self.deleted_at),
             )
         )
 
@@ -138,6 +159,9 @@ class Analysis(RDFModel):
             analysis_date=d.get("analysis_date"),
             elements=[Element.from_dict(e) for e in d.get("elements", [])],
             isotopes=[Isotope.from_dict(i) for i in d.get("isotopes", [])],
+            is_deleted=d.get("is_deleted", False),
+            deleted_by=d.get("deleted_by"),
+            deleted_at=d.get("deleted_at"),
         )
 
 
