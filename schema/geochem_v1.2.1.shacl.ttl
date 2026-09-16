@@ -118,6 +118,18 @@
         """ ;
     ] ;
 
+    # Recommended: deleted_by/deleted_at should accompany is_deleted=true
+    sh:sparql [
+        sh:message "If :is_deleted is true, :deleted_by and :deleted_at should also be specified" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                $this <https://geochemistry.isi.edu/ontology/is_deleted> true .
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/deleted_by> ?b }
+            }
+        """ ;
+    ] ;
+
     sh:property [
         sh:path :sample_id ;
         sh:datatype xsd:string ;
@@ -179,6 +191,29 @@
         sh:name "edit history" ;
     ] ;
     sh:property [
+        sh:path :is_deleted ;
+        sh:datatype xsd:boolean ;
+        sh:maxCount 1 ;
+        sh:name "is deleted" ;
+    ] ;
+    sh:property [
+        sh:path :deleted_by ;
+        sh:datatype xsd:anyURI ;
+        sh:maxCount 1 ;
+        sh:name "deleted by" ;
+    ] ;
+    sh:property [
+        sh:path :deleted_at ;
+        sh:datatype xsd:dateTime ;
+        sh:maxCount 1 ;
+        sh:name "deleted at" ;
+    ] ;
+    sh:property [
+        sh:path mo:location_info ;
+        sh:class mo:LocationInfo ;
+        sh:name "location info" ;
+    ] ;
+    sh:property [
         sh:path :sampling_method ;
         sh:datatype xsd:string ;
         sh:maxCount 1 ;
@@ -225,6 +260,12 @@
         sh:datatype xsd:string ;
         sh:maxCount 1 ;
         sh:name "stratigraphic unit uid" ;
+    ] ;
+    sh:property [
+        sh:path :strat_unit_name ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:name "stratigraphic unit name" ;
     ] ;
     sh:property [
         sh:path :strat_grouping ;
@@ -344,6 +385,18 @@
         """ ;
     ] ;
 
+    # Recommended: deleted_by/deleted_at should accompany is_deleted=true
+    sh:sparql [
+        sh:message "If :is_deleted is true, :deleted_by and :deleted_at should also be specified" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                $this <https://geochemistry.isi.edu/ontology/is_deleted> true .
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/deleted_by> ?b }
+            }
+        """ ;
+    ] ;
+
     sh:property [
         sh:path :element ;
         sh:class :Element ;
@@ -417,6 +470,24 @@
         sh:path :edit_history ;
         sh:class :EditEvent ;
         sh:name "edit history" ;
+    ] ;
+    sh:property [
+        sh:path :is_deleted ;
+        sh:datatype xsd:boolean ;
+        sh:maxCount 1 ;
+        sh:name "is deleted" ;
+    ] ;
+    sh:property [
+        sh:path :deleted_by ;
+        sh:datatype xsd:anyURI ;
+        sh:maxCount 1 ;
+        sh:name "deleted by" ;
+    ] ;
+    sh:property [
+        sh:path :deleted_at ;
+        sh:datatype xsd:dateTime ;
+        sh:maxCount 1 ;
+        sh:name "deleted at" ;
     ] .
 
 
@@ -448,6 +519,18 @@
             SELECT $this WHERE {
                 $this <https://geochemistry.isi.edu/ontology/grade> ?g .
                 FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/grade_unit> ?u }
+            }
+        """ ;
+    ] ;
+
+    # Recommended: deleted_by/deleted_at should accompany is_deleted=true
+    sh:sparql [
+        sh:message "If :is_deleted is true, :deleted_by and :deleted_at should also be specified" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                $this <https://geochemistry.isi.edu/ontology/is_deleted> true .
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/deleted_by> ?b }
             }
         """ ;
     ] ;
@@ -492,6 +575,24 @@
         sh:path :edit_history ;
         sh:class :EditEvent ;
         sh:name "edit history" ;
+    ] ;
+    sh:property [
+        sh:path :is_deleted ;
+        sh:datatype xsd:boolean ;
+        sh:maxCount 1 ;
+        sh:name "is deleted" ;
+    ] ;
+    sh:property [
+        sh:path :deleted_by ;
+        sh:datatype xsd:anyURI ;
+        sh:maxCount 1 ;
+        sh:name "deleted by" ;
+    ] ;
+    sh:property [
+        sh:path :deleted_at ;
+        sh:datatype xsd:dateTime ;
+        sh:maxCount 1 ;
+        sh:name "deleted at" ;
     ] .
 
 
@@ -661,6 +762,18 @@
     sh:targetClass mo:MineralSite ;
     sh:name "MineralSite (GeoChem extensions)" ;
 
+    # Recommended: deleted_by/deleted_at should accompany is_deleted=true
+    sh:sparql [
+        sh:message "If :is_deleted is true, :deleted_by and :deleted_at should also be specified" ;
+        sh:severity sh:Warning ;
+        sh:select """
+            SELECT $this WHERE {
+                $this <https://geochemistry.isi.edu/ontology/is_deleted> true .
+                FILTER NOT EXISTS { $this <https://geochemistry.isi.edu/ontology/deleted_by> ?b }
+            }
+        """ ;
+    ] ;
+
     sh:property [
         sh:path :row_index ;
         sh:datatype xsd:integer ;
@@ -672,6 +785,24 @@
         sh:path :has_sample ;
         sh:class :Sample ;
         sh:name "has sample" ;
+    ] ;
+    sh:property [
+        sh:path :is_deleted ;
+        sh:datatype xsd:boolean ;
+        sh:maxCount 1 ;
+        sh:name "is deleted" ;
+    ] ;
+    sh:property [
+        sh:path :deleted_by ;
+        sh:datatype xsd:anyURI ;
+        sh:maxCount 1 ;
+        sh:name "deleted by" ;
+    ] ;
+    sh:property [
+        sh:path :deleted_at ;
+        sh:datatype xsd:dateTime ;
+        sh:maxCount 1 ;
+        sh:name "deleted at" ;
     ] .
 
 
