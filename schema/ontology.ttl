@@ -479,6 +479,30 @@ geo:wktLiteral rdf:type rdfs:Datatype .
           rdfs:label "location"@en .
 
 
+###  https://minmod.isi.edu/ontology/location_accuracy
+:location_accuracy rdf:type owl:DatatypeProperty ;
+                   rdfs:subPropertyOf :location_info_dataproperty ;
+                   rdfs:range xsd:decimal ;
+                   rdfs:comment "Estimate of absolute accuracy of the given coordinates in metres on the ground."@en ;
+                   rdfs:label "location accuracy"@en .
+
+
+###  https://minmod.isi.edu/ontology/location_description
+:location_description rdf:type owl:DatatypeProperty ;
+                      rdfs:subPropertyOf :location_info_dataproperty ;
+                      rdfs:range xsd:string ;
+                      rdfs:comment "Any additional information relating to the sampling location (e.g., 17 Level, XYZ Orebody)."@en ;
+                      rdfs:label "location description"@en .
+
+
+###  https://minmod.isi.edu/ontology/location_source
+:location_source rdf:type owl:DatatypeProperty ;
+                 rdfs:subPropertyOf :location_info_dataproperty ;
+                 rdfs:range xsd:string ;
+                 rdfs:comment "Method used to obtain the deposit location."@en ;
+                 rdfs:label "location source"@en .
+
+
 ###  https://minmod.isi.edu/ontology/location_info_dataproperty
 :location_info_dataproperty rdf:type owl:DatatypeProperty ;
                             rdfs:subPropertyOf owl:topDataProperty ;
@@ -562,6 +586,14 @@ geo:wktLiteral rdf:type rdfs:Datatype .
                         rdfs:label "page info dataproperty"@en .
 
 
+###  https://minmod.isi.edu/ontology/primary_commodities
+:primary_commodities rdf:type owl:DatatypeProperty ;
+                     rdfs:subPropertyOf :mineral_site_dataproperty ;
+                     rdfs:range xsd:string ;
+                     rdfs:comment "An aggregated, comma separated, list of reported primary commodity codes for the deposit."@en ;
+                     rdfs:label "primary commodities"@en .
+
+
 ###  https://minmod.isi.edu/ontology/process
 :process rdf:type owl:DatatypeProperty ;
          rdfs:subPropertyOf :geology_info_dataproperty ;
@@ -589,6 +621,14 @@ geo:wktLiteral rdf:type rdfs:Datatype .
            rdfs:subPropertyOf :mineral_site_dataproperty ;
            rdfs:range xsd:string ;
            rdfs:label "site rank"@en .
+
+
+###  https://minmod.isi.edu/ontology/secondary_commodities
+:secondary_commodities rdf:type owl:DatatypeProperty ;
+                       rdfs:subPropertyOf :mineral_site_dataproperty ;
+                       rdfs:range xsd:string ;
+                       rdfs:comment "An aggregated, comma separated, list of reported secondary commodity codes for the deposit."@en ;
+                       rdfs:label "secondary commodities"@en .
 
 
 ###  https://minmod.isi.edu/ontology/site_type
