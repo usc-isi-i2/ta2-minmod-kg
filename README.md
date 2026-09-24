@@ -36,10 +36,12 @@ Setup the workspace by cloning [ta2-minmod-data](https://github.com/DARPA-CRITIC
 
 ```bash
 git clone --depth 1 https://github.com/DARPA-CRITICALMAAS/ta2-minmod-data
-git clone --depth 1 https://github.com/DARPA-CRITICALMAAS/ta2-minmod-kg
+git clone --depth 1 --recurse-submodules https://github.com/DARPA-CRITICALMAAS/ta2-minmod-kg
 mkdir kgdata
 mkdir config
 ```
+
+`--recurse-submodules` is required: the GeoChem ontology and SHACL shapes come from the `ta2-table-understanding` submodule at `vendor/ta2-table-understanding`. Without it, GeoChem publishes fail SHACL validation and the backend Docker build fails. For an existing clone, run `git submodule update --init` once, then optionally `git config submodule.recurse true` so later pulls update the submodule automatically.
 
 The directory will look like this
 

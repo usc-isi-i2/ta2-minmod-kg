@@ -40,5 +40,6 @@ RUN cd /home/criticalmaas/kg && pip install .
 ADD --chown=criticalmaas:criticalmaas minmodkg /home/criticalmaas/kg/minmodkg
 ADD --chown=criticalmaas:criticalmaas extractors /home/criticalmaas/kg/extractors
 ADD --chown=criticalmaas:criticalmaas schema /home/criticalmaas/kg/schema
+ADD --chown=criticalmaas:criticalmaas vendor/ta2-table-understanding/schema /home/criticalmaas/kg/vendor/ta2-table-understanding/schema
 
 RUN cd /home/criticalmaas/kg && pip install --no-deps .

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from minmodkg.validators import mineral_site_deser
+from minmodkg.models.kg.sample import Sample
+from minmodkg.validators import mineral_site_deser, validate_sample_shacl
 
 
 class TestMineralSiteParser:
@@ -94,3 +95,91 @@ class TestMineralSiteParser:
 
         with pytest.raises(ValueError):
             mineral_site_deser(raw)
+
+
+class TestValidateSampleShacl:
+    """validate_sample_shacl() (ta2-table-understanding issue #18's SHACL gate)
+    against the real, GeoChem ontology/shapes from the ta2-table-understanding submodule and the real
+    pyshacl pipeline -- not mocked, unlike test_sample.py's TestSHACLValidation,
+    which isolates SampleService.publish()'s wiring instead. Docker-free: this
+    only needs the KG-layer Sample dataclass, no DB."""
+
+    def test_minimal_sample_conforms(self):
+        sample = Sample.from_dict(
+            {"sample_id": "SM-1", "mineral_site_id": "site__test__1__tester"}
+        )
+        assert validate_sample_shacl(sample) == []
+
+    def test_grade_without_unit_is_advisory_not_blocking(self):
+        """Regression guard: the shape declares this sh:severity sh:Warning, but
+        pyshacl's SPARQLConstraintComponent results always come back as
+        sh:Violation regardless (see _shacl_advisory_messages' docstring) --
+        this pins that validate_sample_shacl still treats it as non-blocking."""
+        sample = Sample.from_dict(
+            {
+                "sample_id": "SM-2",
+                "mineral_site_id": "site__test__1__tester",
+                "analyses": [
+                    {
+                        "analysis_id": "A-1",
+                        "elements": [{"label": "Au", "grade": 2.5}],
+                    }
+                ],
+            }
+        )
+        assert validate_sample_shacl(sample) == []
+
+    def test_decimal_and_wkt_literals_do_not_spuriously_fail(self):
+        """Regression guard for _normalize_graph_for_shacl: RDFModel.to_graph()
+        builds decimal literals from Python floats in a way that keeps rdflib's
+        cached value a `float` rather than a `decimal.Decimal`, and WKT strings
+        typed xsd:string rather than geo:wktLiteral -- both would otherwise fail
+        every sample with a grade or a location, regardless of real content."""
+        sample = Sample.from_dict(
+            {
+                "sample_id": "SM-3",
+                "mineral_site_id": "site__test__1__tester",
+                "location": {"coordinates": "POINT(-84.6 35.6)"},
+                "analyses": [
+                    {
+                        "analysis_id": "A-1",
+                        "elements": [
+                            {
+                                "label": "Au",
+                                "grade": 2.5,
+                                "grade_unit": {
+                                    "observed_name": "ppm",
+                                    "confidence": 1.0,
+                                    "source": "test",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        assert validate_sample_shacl(sample) == []
+
+    def test_edit_history_datatypes_do_not_spuriously_fail(self):
+        """Regression guard: :EditEvent's SHACL shape (added along with
+        :EditEvent itself, ta2-table-understanding PR #16) requires
+        :updated_by as xsd:anyURI and :updated_at as xsd:dateTime, but
+        RDFModel.to_graph() only knows these fields are Python strs and types
+        them xsd:string -- would otherwise fail every sample with any edit
+        history at all, i.e. every sample that's ever been saved once."""
+        sample = Sample.from_dict(
+            {
+                "sample_id": "SM-4",
+                "mineral_site_id": "site__test__1__tester",
+                "edit_history": [
+                    {
+                        "updated_by": "https://minmod.isi.edu/users/u/tester",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "changed_properties": [
+                            "https://geochemistry.isi.edu/ontology/sample_id"
+                        ],
+                    }
+                ],
+            }
+        )
+        assert validate_sample_shacl(sample) == []

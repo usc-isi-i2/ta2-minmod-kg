@@ -120,6 +120,18 @@ def make_site_id(username: str, source_id: str, record_id: str) -> str:
     return f"site__{path}"
 
 
+def make_sample_id(parent_site_id: str, sample_id: str) -> str:
+    """Make an internal id for a GeoChem sample, scoped by its parent mineral site.
+
+    :sample_id (the ontology property) is source-provided data, not guaranteed globally
+    unique on its own -- so the actual lookup/URI key combines it with the parent site's
+    already-unique site_id, mirroring how make_site_id scopes source_id+record_id.
+    """
+    assert isinstance(sample_id, str) and sample_id == sample_id.strip(), sample_id
+    path = shorten_id(f"{parent_site_id}__{slugify(sample_id)}", 120)
+    return f"sample__{path}"
+
+
 def make_site_uri_deprecated(
     source_id: str, record_id: str | int, namespace: str = MR_NS
 ) -> str:

@@ -5,6 +5,7 @@ from typing import Sequence
 import typer
 from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.mineral_site import MineralSiteAndInventory
+from minmodkg.models.kgrel.sample import Sample
 from minmodkg.typing import InternalID
 
 
@@ -31,6 +32,10 @@ class Listener:
                     event.data["groups"],
                     event.data["diff_groups"],
                 )
+            elif event.type == "sample:add":
+                self.handle_sample_add(event, Sample.from_dict(event.data["sample"]))
+            elif event.type == "sample:update":
+                self.handle_sample_update(event, Sample.from_dict(event.data["sample"]))
             else:
                 raise ValueError(f"Unknown event type: {event.type}")
 
@@ -60,4 +65,10 @@ class Listener:
         groups: list[list[InternalID]],
         diff_groups: dict[InternalID, list[InternalID]],
     ):
+        raise NotImplementedError()
+
+    def handle_sample_add(self, event: EventLog, sample: Sample):
+        raise NotImplementedError()
+
+    def handle_sample_update(self, event: EventLog, sample: Sample):
         raise NotImplementedError()

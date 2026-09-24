@@ -1,0 +1,3 @@
+[submodule "vendor/ta2-table-understanding"]
+	path = vendor/ta2-table-understanding
+	url = https://github.com/usc-isi-i2/ta2-table-understanding.git

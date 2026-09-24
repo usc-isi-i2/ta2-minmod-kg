@@ -26,6 +26,7 @@ serde2 = { version = "^1.8.6", extras = ["all"] }
 timer4 = "^1.1.0"
 bcrypt = "^4.2.0"
 jaydebeapi = "^1.2.3"
+pyshacl = "^0.40.1"
 
 [tool.poetry.dev-dependencies]
 erdantic = "^1.0.3"

@@ -79,6 +79,12 @@ class MineralSite(MineralSiteIdent, RDFModel):
     )
     reference: Annotated[list[Reference], P()] = field(default_factory=list)
     discovered_year: Annotated[Optional[int], P()] = None
+    # Soft-delete, same convention as :Sample/:Analysis/:Element -- see
+    # the GeoChem ontology. deleted_by/deleted_at are server-derived from
+    # the session, never client-supplied.
+    is_deleted: Annotated[bool, P()] = False
+    deleted_by: Annotated[Optional[IRI], P()] = None
+    deleted_at: Annotated[Optional[CleanedNotEmptyStr], P()] = None
 
     modified_at: Annotated[
         Annotated[str, "Datetime with %Y-%m-%dT%H:%M:%S.%fZ format"], P()
@@ -117,6 +123,9 @@ class MineralSite(MineralSiteIdent, RDFModel):
                 ("mineral_inventory", [x.to_dict() for x in self.mineral_inventory]),
                 ("reference", [x.to_dict() for x in self.reference]),
                 ("discovered_year", self.discovered_year),
+                ("is_deleted", self.is_deleted),
+                ("deleted_by", self.deleted_by),
+                ("deleted_at", self.deleted_at),
                 ("created_by", self.created_by),
                 ("modified_at", self.modified_at),
             )
@@ -151,6 +160,9 @@ class MineralSite(MineralSiteIdent, RDFModel):
             ],
             reference=[Reference.from_dict(x) for x in d.get("reference", [])],
             discovered_year=d.get("discovered_year"),
+            is_deleted=d.get("is_deleted", False),
+            deleted_by=d.get("deleted_by"),
+            deleted_at=d.get("deleted_at"),
             created_by=d["created_by"],
             modified_at=d["modified_at"],
         )
@@ -204,6 +216,9 @@ class MineralSite(MineralSiteIdent, RDFModel):
             deposit_type_candidate=site.deposit_type_candidates,
             mineral_inventory=site.inventories,
             reference=site.reference,
+            is_deleted=site.is_deleted,
+            deleted_by=site.deleted_by,
+            deleted_at=site.deleted_at,
             created_by=site.created_by,
             modified_at=format_nanoseconds(site.modified_at),
         )

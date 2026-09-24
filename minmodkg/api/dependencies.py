@@ -15,6 +15,7 @@ from minmodkg.models.kgrel.entities.deposit_type import DepositType
 from minmodkg.models.kgrel.entities.state_or_province import StateOrProvince
 from minmodkg.models.kgrel.user import User
 from minmodkg.services.mineral_site import MineralSiteService
+from minmodkg.services.sample import SampleService
 from minmodkg.typing import InternalID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -54,8 +55,13 @@ def get_mineral_site_service():
     return MineralSiteService()
 
 
+def get_sample_service():
+    return SampleService()
+
+
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
 MineralSiteServiceDep = Annotated[MineralSiteService, Depends(get_mineral_site_service)]
+SampleServiceDep = Annotated[SampleService, Depends(get_sample_service)]
 
 
 def get_snapshot_id():
