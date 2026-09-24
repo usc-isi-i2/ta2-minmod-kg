@@ -179,7 +179,7 @@ class MineralSite(MappedAsDataclass, Base):
     mineral_form: Mapped[list[str]] = mapped_column(JSON)
     geology_info: Mapped[Optional[GeologyInfo]] = mapped_column()
     discovered_year: Mapped[int | None] = mapped_column()
-    # Soft-delete, same convention as Sample -- see schema/geochem_v1.2.1.ttl.
+    # Soft-delete, same convention as Sample -- see the GeoChem ontology.
     # No mapped_column default: created_by/modified_at below have none either,
     # and MappedAsDataclass requires defaulted fields to come last, so every
     # caller passes these explicitly (see from_raw_site, from_dict).

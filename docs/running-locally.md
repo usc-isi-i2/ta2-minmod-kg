@@ -25,6 +25,7 @@ Restore a real dump if you have one (`pg_restore -U minmod -d minmod -h localhos
 
 ```bash
 cd ta2-minmod-kg
+git submodule update --init   # GeoChem ontology/shapes, used for SHACL validation
 python3.11 -m venv .venv
 source .venv/bin/activate
 poetry install --only main

@@ -99,7 +99,7 @@ class TestMineralSiteParser:
 
 class TestValidateSampleShacl:
     """validate_sample_shacl() (ta2-table-understanding issue #18's SHACL gate)
-    against the real, vendored geochem_v1.2.1.shacl.ttl/.ttl files and the real
+    against the real, GeoChem ontology/shapes from the ta2-table-understanding submodule and the real
     pyshacl pipeline -- not mocked, unlike test_sample.py's TestSHACLValidation,
     which isolates SampleService.publish()'s wiring instead. Docker-free: this
     only needs the KG-layer Sample dataclass, no DB."""

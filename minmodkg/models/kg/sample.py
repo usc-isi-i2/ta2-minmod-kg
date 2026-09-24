@@ -78,7 +78,7 @@ class Sample(SampleIdent, RDFModel):
     geological_province: Annotated[Optional[CleanedNotEmptyStr], P()] = None
     strat_unit_uid: Annotated[Optional[CleanedNotEmptyStr], P()] = None
     # Free text as reported -- distinct from strat_unit_uid (a normalized
-    # identifier). Not a rename/replacement of it, see schema/geochem_v1.2.1.ttl.
+    # identifier). Not a rename/replacement of it, see the GeoChem ontology.
     strat_unit_name: Annotated[Optional[CleanedNotEmptyStr], P()] = None
     strat_grouping: Annotated[Optional[CleanedNotEmptyStr], P()] = None
     earth_material_group: Annotated[Optional[CleanedNotEmptyStr], P()] = None

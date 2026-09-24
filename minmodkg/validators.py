@@ -478,12 +478,8 @@ def validate_sample(
                     )
 
 
-# Vendored from ta2-table-understanding/schema/ -- that repo is the source of
-# truth for the ontology/shapes, this is a snapshot copy so the API doesn't
-# depend on a sibling checkout existing at runtime (same reasoning geochem-hmi
-# used for its own vendored copy at hmi_backend/data/ontology/). Re-copy both
-# files here whenever the ontology changes in a way that affects validation.
-_GEOCHEM_SCHEMA_DIR = Path(__file__).parent.parent / "schema"
+# ta2-table-understanding submodule, pinned; bump it to pick up ontology changes.
+_GEOCHEM_SCHEMA_DIR = Path(__file__).parent.parent / "vendor/ta2-table-understanding/schema"
 _GEOCHEM_SHAPES_FILE = _GEOCHEM_SCHEMA_DIR / "geochem_v1.2.1.shacl.ttl"
 _GEOCHEM_ONTOLOGY_FILE = _GEOCHEM_SCHEMA_DIR / "geochem_v1.2.1.ttl"
 
