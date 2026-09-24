@@ -147,6 +147,22 @@ python -m statickg ta2-minmod-kg/etl.yml ./kgdata ta2-minmod-data --overwrite-co
 
 Note that this process will continue running to monitor for new changes. Hence, it will not terminate unless a terminating signal is received explicitly.
 
+**1a. Loading GeoChem data**
+
+GeoChem samples are not part of the build above. Load them from the canonical JSON-LD extractions with a separate one-shot loader, once the stores from step 1 are up:
+
+```bash
+export CFG_FILE=<CFG_DIR>/config.yml   # kgrel and triplestore must point at the stores built in step 1
+python -m minmodkg.etl.geochem_loader <jsonld_dir> --data-dir ta2-minmod-data
+```
+
+- Each deposit becomes a mineral site owned by the `geochem-hmi` system user, with `source_id` `https://doi.org/<doi>`, so site ids match what the GeoChem HMI computes. Papers without a DOI are skipped and listed.
+- `--data-dir` resolves ISO country codes and applies curator edits backed up in `data/geochem-samples/`, which take precedence over the JSON-LD.
+- Re-running is safe: rows already in Postgres are skipped, and only entities missing from the triple store are inserted, generated from their Postgres rows. Use `--skip-kg` to load Postgres only.
+- Step 1 creates fresh database versions on every full rebuild, so run the loader again after each rebuild.
+
+The `geochem-hmi` user must exist with the `system` role for the HMI to edit these sites. The `user` command only creates `user`-role accounts, so use `add-user`, set `"role": "system"` in the resulting file, then `load-user` it.
+
 **2. Starting other services**
 
 ```bash
