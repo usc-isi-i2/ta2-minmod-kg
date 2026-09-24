@@ -116,6 +116,20 @@ Additionally, we have an option to load users from a file (.JSON) using the foll
 
 These commands need to be run on a machine that can have access to the database. If you deployed the database inside Docker, you can run the command inside the Docker container with `docker exec -it <container_name> python -m minmodkg.api ...`.
 
+### Database migrations
+
+The API creates missing tables on startup but never adds columns to existing ones, so schema changes to existing tables ship as SQL scripts in `migrations/`. Apply each `NNN_*.up.sql` in order **before** starting the new API; each is idempotent and runs in one transaction. `NNN_*.down.sql` reverts it (and may drop data).
+
+```bash
+# Postgres running in Docker (find the container with `docker ps`)
+docker exec -i <postgres_container> psql -U minmod -d minmod -v ON_ERROR_STOP=1 < migrations/001_geochem_sample.up.sql
+
+# or directly
+psql "postgresql://minmod:<password>@<host>:5432/minmod" -v ON_ERROR_STOP=1 -f migrations/001_geochem_sample.up.sql
+```
+
+Lint with `sqlfluff lint migrations/`.
+
 ## Usage
 
 <div align="center">
