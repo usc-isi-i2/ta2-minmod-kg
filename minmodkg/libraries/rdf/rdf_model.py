@@ -175,7 +175,9 @@ class RDFModel:
                         )
                     else:
                         prop = DataProp(
-                            pred=pred, datatype=cfg["datatype"], is_list=cfg["is_list"]
+                            pred=pred,
+                            datatype=arg.datatype or cfg["datatype"],
+                            is_list=cfg["is_list"],
                         )
                     schema.add_property(field_name, prop)
                     break

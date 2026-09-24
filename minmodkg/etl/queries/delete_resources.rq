@@ -1,0 +1,11 @@
+DELETE {
+    ?s ?p ?o
+}
+WHERE {
+    VALUES ?root { $roots }
+    ?root (!(owl:sameAs|rdf:type|mo:normalized_uri))* ?s .
+    ?s ?p ?o .
+
+    # same-as links are curated separately and outlive a reload
+    FILTER (?p != owl:sameAs)
+}

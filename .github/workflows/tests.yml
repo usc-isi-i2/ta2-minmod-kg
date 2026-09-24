@@ -45,4 +45,5 @@ jobs:
             tests/test_misc.py \
             tests/models/kgrel/custom_types/test_site_score.py \
             tests/libraries/rdf/test_rdf_model.py \
+            tests/etl/test_geochem_jsonld.py \
             -v --no-cov
