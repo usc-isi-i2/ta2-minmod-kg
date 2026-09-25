@@ -10,6 +10,7 @@ service, so they survive a reload.
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from pathlib import Path
 from string import Template
 from typing import Annotated, Iterable, Optional
@@ -29,6 +30,7 @@ from minmodkg.models.kg.base import MINMOD_KG, NS_GCO, NS_GCR, NS_MR
 from minmodkg.models.kg.mineral_site import MineralSite as KGMineralSite
 from minmodkg.models.kgrel.base import engine
 from minmodkg.models.kgrel.dedup_mineral_site import DedupMineralSite
+from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.mineral_site import MineralSite, MineralSiteAndInventory
 from minmodkg.models.kgrel.paper import Paper
 from minmodkg.models.kgrel.sample import Sample
@@ -39,7 +41,7 @@ from minmodkg.models.kgrel.views.mineral_inventory_view import (
 )
 from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.services.mineral_site import MineralSiteService
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from tqdm import tqdm
 
@@ -209,6 +211,26 @@ def save_kg(
     MINMOD_KG.batch_insert(triples, batch_size=batch_size)
 
 
+def colliding_files(files: list[Path]) -> dict[Path, str]:
+    """Files whose DOI or paper id is shared with another file, with the reason.
+    Each paper must come from exactly one file, or they would overwrite each
+    other's sites."""
+    owners: dict[tuple[str, str], list[Path]] = defaultdict(list)
+    for file in tqdm(files, desc="Checking papers"):
+        doc = serde.json.deser(file)
+        for key in ("paper_doi", "paper_id"):
+            if value := clean(doc.get(key)):
+                owners[key, value].append(file)
+    out = {}
+    for (key, value), group in owners.items():
+        if len(group) > 1:
+            for file in group:
+                out[file] = f"{key} {value} is also in " + ", ".join(
+                    f.name for f in group if f != file
+                )
+    return out
+
+
 def load_paper(
     doc: dict, file: str, resolver: EntityResolver, skip_kg: bool, batch_size: int
 ) -> PaperContent:
@@ -244,13 +266,28 @@ def main(
         Optional[list[str]], typer.Option(help="Only load these paper ids")
     ] = None,
     skip_kg: Annotated[bool, typer.Option(help="Only load Postgres")] = False,
-    batch_size: Annotated[int, typer.Option(help="Triples per SPARQL update")] = 5120,
+    force: Annotated[
+        bool, typer.Option(help="Load even if edits are not yet written back")
+    ] = False,
+    batch_size: Annotated[int, typer.Option(help="Triples per SPARQL update")] = 50000,
 ):
     files = sorted(jsonld_dir.rglob("*.jsonld"))
     if not files:
         raise typer.BadParameter(f"no *.jsonld files in {jsonld_dir}")
 
     with Session(engine) as session:
+        # the files are the truth: loading before pending edits reach them
+        # would roll those edits back
+        pending = session.execute(
+            select(func.count())
+            .select_from(EventLog)
+            .where(EventLog.backup_synced.is_(False))
+        ).scalar_one()
+        if pending and not force:
+            raise typer.BadParameter(
+                f"{pending} edits have not been written back to the JSON-LD yet; "
+                "let the sync service catch up, or pass --force"
+            )
         if session.get(User, USERNAME) is None:
             typer.secho(
                 f"warning: user {USERNAME!r} does not exist; the HMI can't edit these "
@@ -259,9 +296,12 @@ def main(
             )
 
     resolver = EntityResolver.build(entity_dir)
+    collisions = colliding_files(files)
     n_papers = n_sites = n_samples = 0
     skipped, merged = [], []
     for file in tqdm(files, desc="Loading papers"):
+        if file in collisions:
+            continue
         doc = serde.json.deser(file)
         if paper and clean(doc.get("paper_id")) not in paper:
             continue
@@ -279,6 +319,8 @@ def main(
     typer.echo(f"Loaded {n_papers} papers, {n_sites} sites, {n_samples} samples")
     if skipped:
         typer.echo(f"Skipped {len(skipped)} papers without a DOI: {', '.join(skipped)}")
+    for file, reason in collisions.items():
+        typer.secho(f"Skipped {file.name}: {reason}", fg="yellow")
     if merged:
         typer.echo(
             f"Merged {len(merged)} samples split across nodes, e.g. {merged[:3]}"

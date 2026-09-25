@@ -160,6 +160,11 @@ python -m minmodkg.etl.geochem_loader <jsonld_dir> --entity-dir ta2-minmod-data/
 - Every run replaces each paper's sites and samples, in Postgres and the triple store, with what its file says. Deposits and samples removed from a file are removed from MinMod. Same-as links made by curators are kept.
 - `--entity-dir` resolves ISO country codes. `--paper <paper_id>` reloads selected papers, and `--skip-kg` loads Postgres only.
 - Step 1 creates fresh database versions on every full rebuild, so run the loader again after each rebuild.
+- Fuseki's TDB2 storage never gives space back, and every reload rewrites the papers, so compact the dataset after a load (a full reload of the current corpus adds several GB). The admin endpoint only answers from inside the Fuseki container:
+
+  ```bash
+  docker exec <fuseki_container> curl -s -X POST 'http://localhost:3030/$/compact/minmod?deleteOld=true'
+  ```
 
 Edits to GeoChem samples and deposits made through the API are written back into the paper's JSON-LD by the sync service, so they survive a reload. Pass it the directory with `--jsonld-dir`; if the directory is a git repository, the changes are committed and pushed like the data repository's:
 

@@ -3,7 +3,8 @@ DELETE {
 }
 WHERE {
     VALUES ?root { $roots }
-    ?root (!(owl:sameAs|rdf:type|mo:normalized_uri))* ?s .
+    # every site and sample is a root of its own, so don't walk into them
+    ?root (!(owl:sameAs|rdf:type|mo:normalized_uri|gco:has_mineral_site|gco:has_sample))* ?s .
     ?s ?p ?o .
 
     # same-as links are curated separately and outlive a reload
