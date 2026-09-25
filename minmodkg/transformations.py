@@ -132,6 +132,12 @@ def make_sample_id(parent_site_id: str, sample_id: str) -> str:
     return f"sample__{path}"
 
 
+def make_paper_id(paper_id: str) -> str:
+    """Make an internal id for a GeoChem paper from its corpus paper id."""
+    assert isinstance(paper_id, str) and paper_id == paper_id.strip(), paper_id
+    return f"paper__{shorten_id(slugify(paper_id), 120)}"
+
+
 def make_site_uri_deprecated(
     source_id: str, record_id: str | int, namespace: str = MR_NS
 ) -> str:

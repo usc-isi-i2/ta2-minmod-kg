@@ -147,6 +147,33 @@ python -m statickg ta2-minmod-kg/etl.yml ./kgdata ta2-minmod-data --overwrite-co
 
 Note that this process will continue running to monitor for new changes. Hence, it will not terminate unless a terminating signal is received explicitly.
 
+**1a. Loading GeoChem data**
+
+GeoChem papers are not part of the build above. Their source of truth is a directory of canonical JSON-LD files, one per paper. Load it with a separate loader once the stores from step 1 are up:
+
+```bash
+export CFG_FILE=<CFG_DIR>/config.yml   # kgrel and triplestore must point at the stores built in step 1
+python -m minmodkg.etl.geochem_loader <jsonld_dir> --entity-dir ta2-minmod-data/data/entities
+```
+
+- Each paper becomes a `paper` row and a `:MineralResourcePaper` node. Each of its deposits becomes a mineral site owned by the `geochem-hmi` system user, with `source_id` `https://doi.org/<doi>`, so site ids match what the GeoChem HMI computes. Papers without a DOI are skipped and listed.
+- Every run replaces each paper's sites and samples, in Postgres and the triple store, with what its file says. Deposits and samples removed from a file are removed from MinMod. Same-as links made by curators are kept.
+- `--entity-dir` resolves ISO country codes. `--paper <paper_id>` reloads selected papers, and `--skip-kg` loads Postgres only.
+- Step 1 creates fresh database versions on every full rebuild, so run the loader again after each rebuild.
+- Fuseki's TDB2 storage never gives space back, and every reload rewrites the papers, so compact the dataset after a load (a full reload of the current corpus adds several GB). The admin endpoint only answers from inside the Fuseki container:
+
+  ```bash
+  docker exec <fuseki_container> curl -s -X POST 'http://localhost:3030/$/compact/minmod?deleteOld=true'
+  ```
+
+Edits to GeoChem samples and deposits made through the API are written back into the paper's JSON-LD by the sync service, so they survive a reload. Pass it the directory with `--jsonld-dir`; if the directory is a git repository, the changes are committed and pushed like the data repository's:
+
+```bash
+python -m minmodkg.services.sync <ta2-minmod-data> --jsonld-dir <jsonld_dir>
+```
+
+The `geochem-hmi` user must exist with the `system` role for the HMI to edit these sites. The `user` command only creates `user`-role accounts, so use `add-user`, set `"role": "system"` in the resulting file, then `load-user` it.
+
 **2. Starting other services**
 
 ```bash

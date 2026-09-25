@@ -16,13 +16,17 @@ app = typer.Typer(pretty_exceptions_short=True, pretty_exceptions_enable=False)
 @app.command()
 def main(
     repo_dir: Path,
+    jsonld_dir: Annotated[
+        Optional[Path],
+        typer.Option(help="GeoChem JSON-LD directory that paper edits are written to"),
+    ] = None,
     backup_interval: int = 3600,
     batch_size: int = 500,
     verbose: Annotated[bool, typer.Option("--verbose")] = False,
 ):
     """Synchronize data from the KGRel to KG and CDR."""
     kgsync_listener = KGSyncListener()
-    backup_listener = BackupListener(repo_dir)
+    backup_listener = BackupListener(repo_dir, jsonld_dir)
 
     last_backup_synced: Optional[int] = None
 

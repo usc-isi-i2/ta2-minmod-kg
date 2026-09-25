@@ -53,6 +53,18 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/v1/docs   # 2
 
 `/tmp/native-config.yml` does not survive a reboot — recreate it before restarting the API after one.
 
+### GeoChem data (optional)
+
+Postgres must already hold the MinMod entity tables (commodities, units, countries…). Then load GeoChem papers, sites and samples from the JSON-LD directory, which is their source of truth. With no Fuseki running, skip the triple store:
+
+```bash
+python -m minmodkg.etl.geochem_loader <jsonld_dir> --entity-dir ../ta2-minmod-data/data/entities --skip-kg
+```
+
+With a Fuseki available, point `triplestore` in the config at it and drop `--skip-kg`. Each run replaces every paper from its file; see the README's "Loading GeoChem data". The papers are then served at `GET /api/v1/papers` (filter by `commodity`, `site_id` or `dedup_site_id`), `GET /api/v1/papers/{paper_id}` and `GET /api/v1/papers/{paper_id}/samples`.
+
+To have edits written back into the JSON-LD, run the sync service with `--jsonld-dir <jsonld_dir>`. Point it at a copy, not your only checkout: when the directory is a git repository it commits and pushes.
+
 ## 3. Test user
 
 ```bash
