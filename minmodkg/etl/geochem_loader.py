@@ -28,7 +28,7 @@ from minmodkg.etl.geochem_jsonld import (
 )
 from minmodkg.models.kg.base import MINMOD_KG, NS_GCO, NS_GCR, NS_MR
 from minmodkg.models.kg.mineral_site import MineralSite as KGMineralSite
-from minmodkg.models.kgrel.base import engine
+from minmodkg.models.kgrel.base import create_db_and_tables, engine
 from minmodkg.models.kgrel.dedup_mineral_site import DedupMineralSite
 from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.mineral_site import MineralSite, MineralSiteAndInventory
@@ -271,6 +271,9 @@ def main(
     ] = False,
     batch_size: Annotated[int, typer.Option(help="Triples per SPARQL update")] = 50000,
 ):
+    # adds tables this code introduced (e.g. paper); columns on existing
+    # tables still come from migrations/
+    create_db_and_tables()
     files = sorted(jsonld_dir.rglob("*.jsonld"))
     if not files:
         raise typer.BadParameter(f"no *.jsonld files in {jsonld_dir}")
