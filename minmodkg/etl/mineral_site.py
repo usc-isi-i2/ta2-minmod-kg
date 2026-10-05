@@ -454,6 +454,7 @@ class MergeFn:
                     commodity_form_conversion=self.entity_service.get_commodity_form_conversion(),
                     crs_names=self.entity_service.get_crs_name(),
                     source_score=self.entity_service.get_data_source_score(),
+                    state_index=self.entity_service.get_state_or_province_index(),
                 )
                 norm_site.ms.dedup_site_id = dedup_map[norm_site.ms.site_id]
                 lst_msi.append(norm_site)

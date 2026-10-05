@@ -5,6 +5,7 @@ from typing import Annotated, Mapping, Optional
 
 import shapely.wkt
 from minmodkg.misc.geo import reproject_geometry
+from minmodkg.misc.state_repair import StateCountryIndex
 from minmodkg.misc.utils import extend_unique, makedict
 from minmodkg.models.kg.base import NS_MR
 from minmodkg.models.kg.candidate_entity import CandidateEntity
@@ -121,7 +122,11 @@ class LocationView(GeoCoordinate):
         return self
 
     @staticmethod
-    def from_location(location: Location, crss: dict[str, str]) -> LocationView:
+    def from_location(
+        location: Location,
+        crss: dict[str, str],
+        state_index: Optional[StateCountryIndex] = None,
+    ) -> LocationView:
         view = LocationView()
         if location.coordinates is not None:
             crs = location.crs_name(crss)
@@ -155,6 +160,20 @@ class LocationView(GeoCoordinate):
             for ent in location.state_or_province
             if ent.normalized_uri is not None
         ]
+        if state_index is not None and len(view.country) > 0:
+            # A state that sits in none of the recorded countries is re-resolved
+            # inside them, or dropped. Only the view changes: `location` is what
+            # goes to the KG, and keeps the source's observed_name for curators.
+            states = []
+            for ent in location.state_or_province:
+                if ent.normalized_uri is None:
+                    continue
+                _, state = state_index.repair(
+                    NS_MR.id(ent.normalized_uri), ent.observed_name, view.country
+                )
+                if state is not None:
+                    states.append(state)
+            view.state_or_province = states
         return view
 
 

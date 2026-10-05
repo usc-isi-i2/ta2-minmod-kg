@@ -6,6 +6,7 @@ from urllib.parse import urljoin
 
 import httpx
 import serde.json
+from minmodkg.misc.state_repair import StateCountryIndex
 from minmodkg.models.kg.base import NS_MR
 from minmodkg.models.kg.entities.commodity_form import CommodityForm as KGCommodityForm
 from minmodkg.models.kg.entities.crs import CRS as KGCRS
@@ -73,6 +74,17 @@ class EntityService:
         if self.crs_name is None:
             self.crs_name = {crs.uri: crs.name for crs in self.get_crs()}
         return self.crs_name
+
+    def get_state_or_province_index(self) -> StateCountryIndex:
+        """Every state with its country, name and code, for the merge-time repair."""
+        if (
+            not hasattr(self, "state_or_province_index")
+            or self.state_or_province_index is None
+        ):
+            self.state_or_province_index = StateCountryIndex.build(
+                self.get_state_or_province_idmap().values()
+            )
+        return self.state_or_province_index
 
     def get_deposit_type_idmap(self) -> dict[InternalID, DepositType]:
         if self.deposit_type_idmap is None:

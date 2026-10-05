@@ -273,6 +273,7 @@ class EntityDeserFn:
                     id=raw_record["minmod_id"],
                     name=raw_record["name"],
                     country=name2country[raw_record["country_name"]].id,
+                    state_code=raw_record.get("state_code") or None,
                 )
             )
         return records
