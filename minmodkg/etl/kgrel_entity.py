@@ -106,9 +106,18 @@ class EntityDeserFn:
     def invoke(self, infile: InputFile, outdir: Path) -> list[Path]:
         records = self.read_file(infile.path)
         clsname = records[0].__class__.__name__
+        dicts = [r.to_dict() for r in records]
+        if infile.path.name == "state_or_province.csv":
+            # aliases ride along in the JSON for the merge-time state repair
+            # only; StateOrProvince.from_dict ignores them, so they never reach
+            # Postgres, and to_kg() leaves them out of the KG
+            aliases = self.read_state_or_province_aliases(infile.path)
+            for d in dicts:
+                if d["id"] in aliases:
+                    d["aliases"] = aliases[d["id"]]
 
         serde.json.ser(
-            {clsname: [r.to_dict() for r in records]},
+            {clsname: dicts},
             outdir / f"{infile.path.stem}.json",
             indent=2,
         )
@@ -277,6 +286,20 @@ class EntityDeserFn:
                 )
             )
         return records
+
+    @staticmethod
+    def read_state_or_province_aliases(infile: Path) -> dict[str, list[str]]:
+        """The optional `alt names` column: other names sources use for a state
+        ("Orissa" for Odisha), pipe-separated like country.csv's. Empty or absent
+        for most rows; only the merge-time state repair uses them."""
+        raw_records = serde.csv.deser(infile, deser_as_record=True)
+        aliases = {}
+        for raw_record in raw_records:
+            names = [s.strip() for s in (raw_record.get("alt names") or "").split("|")]
+            names = [s for s in names if s != ""]
+            if len(names) > 0:
+                aliases[raw_record["minmod_id"]] = names
+        return aliases
 
     @staticmethod
     def read_unit(infile: Path) -> list[Unit]:

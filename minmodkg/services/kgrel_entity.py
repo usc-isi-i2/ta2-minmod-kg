@@ -76,15 +76,23 @@ class EntityService:
         return self.crs_name
 
     def get_state_or_province_index(self) -> StateCountryIndex:
-        """Every state with its country, name and code, for the merge-time repair."""
+        """Every state with its country, name, code and aliases, for the
+        merge-time repair."""
         if (
             not hasattr(self, "state_or_province_index")
             or self.state_or_province_index is None
         ):
             self.state_or_province_index = StateCountryIndex.build(
-                self.get_state_or_province_idmap().values()
+                self.get_state_or_province_idmap().values(),
+                self.get_state_or_province_aliases(),
             )
         return self.state_or_province_index
+
+    def get_state_or_province_aliases(self) -> dict[InternalID, list[str]]:
+        """Other names of each state, used only by the merge-time repair. They
+        are not stored in Postgres, so this service has none; the ETL merge
+        reads them from the entity files (FileEntityService)."""
+        return {}
 
     def get_deposit_type_idmap(self) -> dict[InternalID, DepositType]:
         if self.deposit_type_idmap is None:
@@ -217,6 +225,12 @@ class FileEntityService(EntityService):
             cls.__name__
         ]
         return [cls.from_dict(record) for record in records]
+
+    def get_state_or_province_aliases(self) -> dict[InternalID, list[str]]:
+        records = serde.json.deser(
+            self.entity_dir / f"{StateOrProvince.__tablename__}.json"
+        )[StateOrProvince.__name__]
+        return {r["id"]: r["aliases"] for r in records if r.get("aliases")}
 
 
 class RemoteEntityService(EntityService):
