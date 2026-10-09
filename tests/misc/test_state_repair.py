@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import pytest
 import serde.json
 from minmodkg.etl.kgrel_entity import EntityDeserFn
 from minmodkg.misc.state_repair import StateCountryIndex, drop_admin_words, fold_name
@@ -261,3 +262,114 @@ def _aliases(entity_dir: Path) -> dict[str, list[str]]:
     return EntityDeserFn.read_state_or_province_aliases(
         entity_dir / "state_or_province.csv"
     )
+
+
+# Dependencies: a dropped state that names a listed dependency of a recorded
+# country moves the record to the dependency's country.
+
+DK, GL, NO, AT = "DK", "GL", "NO", "AT"
+DEP_STATES = STATES + [
+    State("burgenland", "Burgenland", AT, "1"),
+    State("rogaland", "Rogaland", NO, "11"),
+    State("hovedstaden", "Hovedstaden", DK, "84"),
+]
+DEPS = [(DK, GL, ("Greenland",))]
+
+
+def test_dependency_moves_a_dropped_state():
+    idx = StateCountryIndex.build(DEP_STATES, dependencies=DEPS)
+    # ProcMine picked Burgenland (Austria) for "Greenland" on a Danish record
+    assert idx.repair("burgenland", "Greenland", [DK]) == ("drop", None)
+    assert idx.dependency("burgenland", "Greenland", [DK]) == (DK, GL)
+    assert idx.dependency("burgenland", "GREENLAND", [DK, NO]) == (DK, GL)
+
+
+def test_dependency_never_touches_a_state_that_resolves():
+    # Denmark with its own "Greenland" row: the repair repoints, nothing moves
+    states = DEP_STATES + [State("dk_greenland", "Greenland", DK)]
+    idx = StateCountryIndex.build(states, dependencies=DEPS)
+    assert idx.repair("burgenland", "Greenland", [DK]) == ("repoint", "dk_greenland")
+    assert idx.dependency("burgenland", "Greenland", [DK]) is None
+
+
+def test_dependency_needs_a_contradiction():
+    idx = StateCountryIndex.build(DEP_STATES, dependencies=DEPS)
+    assert idx.repair("hovedstaden", "Greenland", [DK]) == ("keep", "hovedstaden")
+    assert idx.dependency("hovedstaden", "Greenland", [DK]) is None
+
+
+def test_dependency_needs_a_listed_name_exactly():
+    idx = StateCountryIndex.build(DEP_STATES, dependencies=DEPS)
+    assert idx.dependency("burgenland", "Greenland Region", [DK]) is None
+    assert idx.dependency("burgenland", None, [DK]) is None
+
+
+def test_dependency_needs_its_sovereign_recorded():
+    idx = StateCountryIndex.build(DEP_STATES, dependencies=DEPS)
+    assert idx.repair("burgenland", "Greenland", [NO]) == ("drop", None)
+    assert idx.dependency("burgenland", "Greenland", [NO]) is None
+
+
+def test_excluded_pairs_cannot_be_listed():
+    from minmodkg.misc.state_repair import DEPENDENCIES, NOT_DEPENDENCIES
+
+    assert not {(s, d) for s, d, _ in DEPENDENCIES} & NOT_DEPENDENCIES
+    for sovereign, dependency in NOT_DEPENDENCIES:
+        with pytest.raises(ValueError):
+            StateCountryIndex.build([], dependencies=[(sovereign, dependency, ("x",))])
+
+
+def test_dependencies_against_the_real_tables():
+    """Each listed pair names two countries of country.csv, and its names have
+    no state row under the sovereign: a dependency the table also models as a
+    state (Puerto Rico, Guadeloupe) resolves, and must not be listed."""
+    from minmodkg.misc.state_repair import DEPENDENCIES
+
+    countries = {
+        c.id for c in EntityDeserFn.read_country(DATA_ENTITY_DIR / "country.csv")
+    }
+    states = _states(DATA_ENTITY_DIR)
+    idx = StateCountryIndex.build(states, _aliases(DATA_ENTITY_DIR))
+    for sovereign, dependency, dep_names in DEPENDENCIES:
+        assert sovereign in countries and dependency in countries
+        assert sovereign != dependency
+        for name in dep_names:
+            assert idx.resolve(name, [sovereign]) is None, (sovereign, name)
+
+
+def test_no_state_moves_by_its_own_name():
+    states = _states(DATA_ENTITY_DIR)
+    idx = StateCountryIndex.build(states, _aliases(DATA_ENTITY_DIR))
+    assert [s.id for s in states if idx.dependency(s.id, s.name, [s.country])] == []
+
+
+def test_location_view_moves_the_country():
+    from minmodkg.models.kg.base import NS_MR
+    from minmodkg.models.kg.candidate_entity import CandidateEntity
+    from minmodkg.models.kgrel.custom_types.location import Location, LocationView
+
+    idx = StateCountryIndex.build(_states(ENTITY_DIR))
+
+    def cand(id=None, name=None):
+        return CandidateEntity(
+            source="test",
+            confidence=1.0,
+            observed_name=name,
+            normalized_uri=NS_MR.uristr(id) if id else None,
+        )
+
+    # France and Colombia recorded; ProcMine picked the Federal Dependencies
+    # of Venezuela for New Caledonia
+    location = Location(
+        country=[cand("Q1075"), cand("Q1047")],
+        state_or_province=[
+            cand("Q6964", "Territory Of New Caledonia And Dependencies")
+        ],
+    )
+    view = LocationView.from_location(location, {}, idx)
+    assert view.country == ["Q1154", "Q1047"]
+    assert view.state_or_province == []
+    # the KG side keeps what the source said
+    assert [NS_MR.id(c.normalized_uri) for c in location.country] == ["Q1075", "Q1047"]
+    # without the index, nothing moves
+    assert LocationView.from_location(location, {}, None).country == ["Q1075", "Q1047"]

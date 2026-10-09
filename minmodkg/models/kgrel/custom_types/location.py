@@ -164,16 +164,28 @@ class LocationView(GeoCoordinate):
             # A state that sits in none of the recorded countries is re-resolved
             # inside them, or dropped. Only the view changes: `location` is what
             # goes to the KG, and keeps the source's observed_name for curators.
+            # A dropped state that names a listed dependency of a recorded
+            # country ("Greenland" under Denmark) moves the record to that
+            # dependency's country instead; all decided against the recorded
+            # countries, then applied.
             states = []
+            moves = {}
             for ent in location.state_or_province:
                 if ent.normalized_uri is None:
                     continue
-                _, state = state_index.repair(
-                    NS_MR.id(ent.normalized_uri), ent.observed_name, view.country
-                )
+                state_id = NS_MR.id(ent.normalized_uri)
+                _, state = state_index.repair(state_id, ent.observed_name, view.country)
                 if state is not None:
                     states.append(state)
+                    continue
+                move = state_index.dependency(state_id, ent.observed_name, view.country)
+                if move is not None:
+                    moves[move[0]] = move[1]
             view.state_or_province = states
+            if moves:
+                view.country = list(
+                    dict.fromkeys(moves.get(c, c) for c in view.country)
+                )
         return view
 
 

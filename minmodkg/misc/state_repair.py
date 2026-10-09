@@ -28,7 +28,12 @@ The rule is deliberately narrow:
 * a record with no ``observed_name`` is re-resolved by the chosen state's own
   name instead (Florida, Uruguay -> Florida, United States);
 * a unique hit replaces the normalized_uri; no hit, or more than one, drops
-  it and leaves ``observed_name`` in place for a curator.
+  it and leaves ``observed_name`` in place for a curator;
+* a state that would be dropped, and whose ``observed_name`` is a listed
+  dependency of a recorded country (``DEPENDENCIES``: "Greenland" under
+  Denmark), moves the record to the dependency's own country instead, with no
+  state. Only an explicit list, and only for drops: a state that resolves is
+  never touched.
 
 It never guesses: there is no fuzzy matching.
 """
@@ -90,6 +95,39 @@ STOPWORDS = frozenset(
     {"of", "de", "del", "la", "el", "los", "las", "the", "du", "da", "dos", "das", "do"}
 )
 
+# Dependencies that have their own entry in country.csv and no state row under
+# their sovereign: (sovereign, dependency, the names a state field uses for it).
+# A record whose recorded country is the sovereign and whose state would be
+# dropped, but names the dependency exactly (folded), is the dependency's
+# record. Pairs are added only after review.
+DEPENDENCIES: tuple[tuple[InternalID, InternalID, tuple[str, ...]], ...] = (
+    # France -> New Caledonia
+    (
+        "Q1075",
+        "Q1154",
+        ("New Caledonia", "Territory of New Caledonia and Dependencies"),
+    ),
+    # Denmark -> Greenland
+    ("Q1059", "Q1086", ("Greenland",)),
+    # Australia -> Christmas Island
+    ("Q1013", "Q1045", ("Christmas Island", "Territory of Christmas Island")),
+    # United Kingdom -> Montserrat
+    ("Q1234", "Q1146", ("Montserrat",)),
+)
+
+# Never dependencies, whatever the list says: a state that shares a country's
+# name is that state (Georgia is a US state), and China/Taiwan is not this
+# repair's to decide.
+NOT_DEPENDENCIES: frozenset[tuple[InternalID, InternalID]] = frozenset(
+    {
+        ("Q1044", "Q1216"),  # China / Taiwan
+        ("Q1235", "Q1081"),  # United States / Georgia
+        ("Q1158", "Q1157"),  # Nigeria / Niger
+        ("Q1020", "Q1126"),  # Belgium / Luxembourg
+        ("Q1092", "Q1132"),  # Guinea / Mali (Mali Prefecture)
+    }
+)
+
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 # NFKD does not decompose the Turkish dotless i, so "Elazığ" would fold to
 # "elaz g"; map it (and the dotted capital) before normalising.
@@ -121,19 +159,29 @@ class StateCountryIndex:
     _folded: dict[InternalID, dict[str, list[InternalID]]] = field(default_factory=dict)
     _code: dict[InternalID, dict[str, list[InternalID]]] = field(default_factory=dict)
     _alias: dict[InternalID, dict[str, list[InternalID]]] = field(default_factory=dict)
+    _dependency: dict[InternalID, dict[str, InternalID]] = field(default_factory=dict)
 
     @classmethod
     def build(
         cls,
         states: Iterable,
         aliases: Optional[Mapping[InternalID, Sequence[str]]] = None,
+        dependencies: Iterable[
+            tuple[InternalID, InternalID, Sequence[str]]
+        ] = DEPENDENCIES,
     ) -> StateCountryIndex:
         """``states`` is any iterable of objects with .id, .name, .country and,
         optionally, .state_code (without it, the code tier never hits).
         ``aliases`` maps a state id to other names sources use for it; without
-        it, the alias tier never hits."""
+        it, the alias tier never hits. ``dependencies`` is the reviewed list of
+        (sovereign, dependency, names)."""
         aliases = aliases or {}
         self = cls()
+        for sovereign, dependency, dep_names in dependencies:
+            if (sovereign, dependency) in NOT_DEPENDENCIES:
+                raise ValueError(f"{sovereign} -> {dependency} is not a dependency")
+            for name in dep_names:
+                self._dependency.setdefault(sovereign, {})[fold_name(name)] = dependency
         for s in states:
             self.state_country[s.id] = s.country
             self.state_name[s.id] = s.name
@@ -220,3 +268,27 @@ class StateCountryIndex:
             key = self.state_name.get(state_id)
         fixed = self.resolve(key, country_ids)
         return ("repoint", fixed) if fixed else ("drop", None)
+
+    def dependency(
+        self,
+        state_id: InternalID,
+        observed_name: Optional[str],
+        country_ids: Sequence[InternalID],
+    ) -> Optional[tuple[InternalID, InternalID]]:
+        """(sovereign, dependency) when this state candidate would be dropped and
+        its ``observed_name`` is a listed name of a dependency of one of the
+        recorded countries; None otherwise, and always None for a candidate the
+        repair keeps or repoints. The caller replaces the sovereign with the
+        dependency in the record's countries; the state stays dropped."""
+        if (
+            not observed_name
+            or self.repair(state_id, observed_name, country_ids)[0] != "drop"
+        ):
+            return None
+        folded = fold_name(observed_name)
+        hits = [
+            (cid, self._dependency[cid][folded])
+            for cid in dict.fromkeys(country_ids)
+            if folded in self._dependency.get(cid, {})
+        ]
+        return hits[0] if len(hits) == 1 else None
