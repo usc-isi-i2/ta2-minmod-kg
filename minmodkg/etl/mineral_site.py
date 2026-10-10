@@ -408,7 +408,7 @@ class MergeFn:
         return group, cls.get_instance(workdir, entity_dir).invoke(**kwargs)
 
     @cache(
-        backend=FileSqliteBackend.factory(filename="merge-v109.sqlite"),
+        backend=FileSqliteBackend.factory(filename="merge-v110.sqlite"),
         cache_ser_args={
             "infiles": lambda lst: orjson.dumps(
                 sorted(x.get_ident() for x in lst)
