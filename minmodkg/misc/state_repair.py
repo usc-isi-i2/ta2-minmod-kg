@@ -33,19 +33,31 @@ The rule is deliberately narrow:
   dependency of a recorded country (``DEPENDENCIES``: "Greenland" under
   Denmark), moves the record to the dependency's own country instead, with no
   state. Only an explicit list, and only for drops: a state that resolves is
-  never touched.
+  never touched;
+* a dropped "Katanga" on a DR Congo record takes the 2015 successor province
+  that contains the record's point (``katanga_successor``), unless the point is
+  within 2 km of a border between two of them.
 
 It never guesses: there is no fuzzy matching.
 """
 
 from __future__ import annotations
 
+import itertools
+import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from functools import cache
+from pathlib import Path
 from typing import Iterable, Mapping, Optional, Sequence
 
+import shapely
+import shapely.wkt
+from minmodkg.misc.geo import reproject_geometry
 from minmodkg.typing import InternalID
+from shapely.geometry import MultiPoint, Point, shape
+from shapely.ops import unary_union
 
 # Administrative words that sources drop and the reference list keeps,
 # counted from the 5,084 names in state_or_province.csv.
@@ -131,6 +143,19 @@ NOT_DEPENDENCIES: frozenset[tuple[InternalID, InternalID]] = frozenset(
         ("Q1092", "Q1132"),  # Guinea / Mali (Mali Prefecture)
     }
 )
+
+# Katanga was split in 2015, and state_or_province.csv has only its four
+# successors. A dropped "Katanga" on a DR Congo record takes the successor that
+# contains the record's point. Boundaries: katanga_successors.geojson, from
+# OCHA / Référentiel Géographique Commun, via HDX and geoBoundaries
+# (gbHumanitarian), CC BY 3.0 IGO.
+KATANGA_COUNTRY: InternalID = "Q1058"  # Democratic Republic of the Congo
+KATANGA_NAMES = frozenset({"katanga", "katanga province"})
+KATANGA_SUCCESSORS = Path(__file__).parent / "katanga_successors.geojson"
+# A point this close to a border between two successors is left empty. Metres
+# in UTM 35S, whose central meridian (27°E) runs through the four.
+KATANGA_BORDER_METRES = 2000
+KATANGA_UTM = "EPSG:32735"
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 # NFKD does not decompose the Turkish dotless i, so "Elazığ" would fold to
@@ -296,3 +321,78 @@ class StateCountryIndex:
             if folded in self._dependency.get(cid, {})
         ]
         return hits[0] if len(hits) == 1 else None
+
+    def katanga(
+        self,
+        state_id: InternalID,
+        observed_name: Optional[str],
+        country_ids: Sequence[InternalID],
+        coordinates: Optional[str],
+        crs: Optional[str],
+    ) -> Optional[InternalID]:
+        """The successor province for this state candidate when the record's
+        country is DR Congo, its ``observed_name`` is Katanga and the repair
+        would drop it: see ``katanga_successor``. None otherwise, and always
+        None for a candidate the repair keeps or repoints."""
+        if (
+            set(country_ids) != {KATANGA_COUNTRY}
+            or not observed_name
+            or fold_name(observed_name) not in KATANGA_NAMES
+            or self.repair(state_id, observed_name, country_ids)[0] != "drop"
+        ):
+            return None
+        return katanga_successor(coordinates, crs)
+
+
+def katanga_successor(
+    coordinates: Optional[str], crs: Optional[str]
+) -> Optional[InternalID]:
+    """The successor province containing a POINT, or every point of a
+    MULTIPOINT, given as WKT in ``crs``. None when there is no usable point (0,0
+    or a round placeholder, as in the Problem 2 coverage check), a point lies
+    outside all four, the points fall in different provinces, or a point is
+    within KATANGA_BORDER_METRES of a border between two of them. Coordinates
+    are taken as given: a sign-flipped point lands outside and stays empty."""
+    if not coordinates or not crs or not crs.startswith("EPSG:"):
+        return None
+    try:
+        geometry = shapely.wkt.loads(coordinates)
+    except shapely.errors.GEOSException:
+        return None
+    if geometry.is_empty or not isinstance(geometry, (Point, MultiPoint)):
+        return None
+    points = [geometry] if isinstance(geometry, Point) else list(geometry.geoms)
+    if all(p.x == 0 and p.y == 0 for p in points) or all(
+        (p.x * 2).is_integer() and (p.y * 2).is_integer() for p in points
+    ):
+        return None
+    provinces, border = _katanga_provinces()
+    found = set()
+    for point in points:
+        point = reproject_geometry(point, crs, "EPSG:4326")
+        hits = [qid for qid, polygon in provinces if polygon.contains(point)]
+        if len(hits) != 1:
+            return None
+        utm = reproject_geometry(point, "EPSG:4326", KATANGA_UTM)
+        if border.distance(utm) <= KATANGA_BORDER_METRES:
+            return None
+        found.add(hits[0])
+    return found.pop() if len(found) == 1 else None
+
+
+@cache
+def _katanga_provinces():
+    """[(id, polygon)] in WGS84, and the borders the four share with each other
+    in KATANGA_UTM. Read once per process."""
+    with open(KATANGA_SUCCESSORS, encoding="utf-8") as f:
+        features = json.load(f)["features"]
+    provinces = [(f["properties"]["minmod_id"], shape(f["geometry"])) for f in features]
+    border = unary_union(
+        [
+            a.boundary.intersection(b.boundary)
+            for (_, a), (_, b) in itertools.combinations(provinces, 2)
+        ]
+    )
+    for _, polygon in provinces:
+        shapely.prepare(polygon)
+    return provinces, reproject_geometry(border, "EPSG:4326", KATANGA_UTM)

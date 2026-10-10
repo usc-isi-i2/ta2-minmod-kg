@@ -412,3 +412,99 @@ def test_location_view_moves_uk_records_to_their_territory(picked, observed, dep
     location.state_or_province = [cand(picked, observed + " Territory")]
     view = LocationView.from_location(location, {}, idx)
     assert (view.country, view.state_or_province) == (["Q1234"], [])
+
+
+# Katanga: a dropped "Katanga" on a DR Congo record takes the 2015 successor
+# province that contains its point.
+
+DRC, ZM, TZ = "Q1058", "Q1248", "Q1218"
+TANGA = "Q6152"  # Tanga (Tanzania): ProcMine's pick for every "Katanga"
+IN_PROVINCE = {
+    "Q3000": "POINT (27.479 -11.664)",  # Lubumbashi, Haut-Katanga
+    "Q3012": "POINT (25.473 -10.716)",  # Kolwezi, Lualaba
+    "Q3001": "POINT (24.99 -8.737)",  # Kamina, Haut-Lomami
+    "Q3021": "POINT (29.194 -5.947)",  # Kalemie, Tanganyika
+}
+
+
+def katanga_view(coordinates, name="Katanga", countries=(DRC,), crs=None, idx=None):
+    from minmodkg.models.kg.base import NS_MR
+    from minmodkg.models.kg.candidate_entity import CandidateEntity
+    from minmodkg.models.kgrel.custom_types.location import Location, LocationView
+
+    def cand(id, name=None):
+        return CandidateEntity(
+            source="test",
+            confidence=1.0,
+            observed_name=name,
+            normalized_uri=NS_MR.uristr(id),
+        )
+
+    location = Location(
+        country=[cand(c) for c in countries],
+        state_or_province=[cand(TANGA, name)],
+        crs=cand("Q999") if crs else None,
+        coordinates=coordinates,
+    )
+    idx = idx or StateCountryIndex.build(_states(ENTITY_DIR))
+    return LocationView.from_location(location, {NS_MR.uristr("Q999"): crs}, idx)
+
+
+@pytest.mark.parametrize("province", sorted(IN_PROVINCE))
+def test_katanga_takes_the_province_of_its_point(province):
+    view = katanga_view(IN_PROVINCE[province])
+    assert (view.country, view.state_or_province) == ([DRC], [province])
+
+
+@pytest.mark.parametrize(
+    "coordinates, name, crs, province",
+    [
+        ("POINT (27.479 -11.664)", "KATANGA PROVINCE", None, "Q3000"),
+        # Lubumbashi in UTM 35S, reprojected to WGS84 first
+        ("POINT (552207.75 8710556.02)", "Katanga", "EPSG:32735", "Q3000"),
+        ("MULTIPOINT ((27.479 -11.664), (27.4 -11.6))", "Katanga", None, "Q3000"),
+    ],
+)
+def test_katanga_names_points_and_crs(coordinates, name, crs, province):
+    assert katanga_view(coordinates, name, crs=crs).state_or_province == [province]
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        None,
+        # MRDS 10400590: 0.65 km from the Haut-Katanga / Lualaba border
+        "POINT (25.9324 -10.9712)",
+        # outside DR Congo: Lubumbashi with its latitude sign flipped, and Lusaka
+        "POINT (27.479 11.664)",
+        "POINT (28.28 -15.41)",
+        "POINT (0 0)",
+        "POINT (27.5 -11.5)",  # a round placeholder inside Haut-Katanga
+        "MULTIPOINT ((27.479 -11.664), (25.473 -10.716))",  # two provinces
+        "LINESTRING (27.4 -11.6, 27.5 -11.7)",
+        "POINT (nan nan)",
+    ],
+)
+def test_katanga_stays_empty(coordinates):
+    view = katanga_view(coordinates)
+    assert (view.country, view.state_or_province) == ([DRC], [])
+
+
+def test_katanga_never_another_name_or_country():
+    point = IN_PROVINCE["Q3000"]
+    # another name dropped in DR Congo is not filled
+    assert katanga_view(point, name="Tanga").state_or_province == []
+    # Katanga on a Zambian record is dropped and not filled; on a Tanzanian one
+    # Tanga is in the recorded country and kept
+    assert katanga_view(point, countries=(ZM,)).state_or_province == []
+    assert katanga_view(point, countries=(TZ,)).state_or_province == [TANGA]
+    # only a record whose recorded country is DR Congo alone
+    assert katanga_view(point, countries=(DRC, ZM)).state_or_province == []
+
+
+def test_katanga_never_changes_what_a_tier_resolves():
+    # an alias resolves "Katanga" to Lualaba: the point (Haut-Katanga) is not used
+    idx = StateCountryIndex.build(_states(ENTITY_DIR), {"Q3012": ["Katanga"]})
+    view = katanga_view(IN_PROVINCE["Q3000"], idx=idx)
+    assert view.state_or_province == ["Q3012"]
+    assert idx.katanga(TANGA, "Katanga", [DRC], IN_PROVINCE["Q3000"], "EPSG:4326") is None
