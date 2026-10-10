@@ -78,7 +78,7 @@ class KGRelEntityETLService(BaseFileService[KGRelEntityETLServiceConstructArgs])
 class EntityDeserFn:
     """Deserialize Entity Data to RDF and Relational data"""
 
-    VERSION = "v107"
+    VERSION = "v108"
 
     instances = {}
 
