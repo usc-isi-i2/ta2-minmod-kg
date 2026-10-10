@@ -10,6 +10,8 @@ from minmodkg.models.kg.base import NS_MR
 from minmodkg.models.kg.candidate_entity import CandidateEntity
 from minmodkg.models.kg.location_info import LocationInfo
 from minmodkg.typing import InternalID
+from shapely.geometry import MultiPoint, Point
+from shapely.geometry.base import BaseGeometry
 
 
 @dataclass
@@ -127,9 +129,12 @@ class LocationView(GeoCoordinate):
             else:
                 try:
                     assert crs.startswith("EPSG:")
-                    geometry = shapely.wkt.loads(location.coordinates)
-                    centroid = shapely.centroid(geometry)
-                    centroid = reproject_geometry(centroid, crs, "EPSG:4326")
+                    geometry = drop_null_island(shapely.wkt.loads(location.coordinates))
+                    if geometry is None:
+                        centroid = None
+                    else:
+                        centroid = shapely.centroid(geometry)
+                        centroid = reproject_geometry(centroid, crs, "EPSG:4326")
                 except shapely.errors.GEOSException:
                     centroid = None
 
@@ -148,3 +153,23 @@ class LocationView(GeoCoordinate):
             if ent.normalized_uri is not None
         ]
         return view
+
+
+def drop_null_island(geometry: BaseGeometry) -> Optional[BaseGeometry]:
+    """Remove points at exactly (0, 0), as written in the source's own CRS.
+
+    Extractors write (0, 0) when a document gives no coordinate, so it is a
+    missing value, not a place. A point there becomes None; a multipoint keeps
+    its other points, or becomes None if none are left. Anything else is
+    returned unchanged.
+    """
+    if geometry.is_empty:
+        return geometry
+    if isinstance(geometry, Point):
+        return None if geometry.x == 0 and geometry.y == 0 else geometry
+    if isinstance(geometry, MultiPoint):
+        kept = [p for p in geometry.geoms if not (p.x == 0 and p.y == 0)]
+        if len(kept) == len(geometry.geoms):
+            return geometry
+        return MultiPoint(kept) if kept else None
+    return geometry
