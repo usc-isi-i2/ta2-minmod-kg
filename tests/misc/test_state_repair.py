@@ -373,3 +373,42 @@ def test_location_view_moves_the_country():
     assert [NS_MR.id(c.normalized_uri) for c in location.country] == ["Q1075", "Q1047"]
     # without the index, nothing moves
     assert LocationView.from_location(location, {}, None).country == ["Q1075", "Q1047"]
+
+
+@pytest.mark.parametrize(
+    "picked, observed, dependency",
+    [
+        # MRDS 10061612 and 10062299: ProcMine picked the US Virgin Islands
+        ("Q6896", "British Virgin Islands", "Q1243"),
+        ("Q6896", "Virgin Islands (British)", "Q1243"),
+        # MRDS 10068643: ProcMine picked Cat Island (The Bahamas)
+        ("Q6239", "Cayman Islands", "Q1040"),
+    ],
+)
+def test_location_view_moves_uk_records_to_their_territory(picked, observed, dependency):
+    from minmodkg.models.kg.base import NS_MR
+    from minmodkg.models.kg.candidate_entity import CandidateEntity
+    from minmodkg.models.kgrel.custom_types.location import Location, LocationView
+
+    idx = StateCountryIndex.build(_states(ENTITY_DIR))
+
+    def cand(id, name=None):
+        return CandidateEntity(
+            source="test",
+            confidence=1.0,
+            observed_name=name,
+            normalized_uri=NS_MR.uristr(id),
+        )
+
+    location = Location(
+        country=[cand("Q1234", "United Kingdom")],
+        state_or_province=[cand(picked, observed)],
+    )
+    view = LocationView.from_location(location, {}, idx)
+    assert view.country == [dependency]
+    assert view.state_or_province == []
+    assert [NS_MR.id(c.normalized_uri) for c in location.country] == ["Q1234"]
+    # a name that is not listed exactly is dropped and stays in the UK
+    location.state_or_province = [cand(picked, observed + " Territory")]
+    view = LocationView.from_location(location, {}, idx)
+    assert (view.country, view.state_or_province) == (["Q1234"], [])

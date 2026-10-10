@@ -113,6 +113,10 @@ DEPENDENCIES: tuple[tuple[InternalID, InternalID, tuple[str, ...]], ...] = (
     ("Q1013", "Q1045", ("Christmas Island", "Territory of Christmas Island")),
     # United Kingdom -> Montserrat
     ("Q1234", "Q1146", ("Montserrat",)),
+    # United Kingdom -> Virgin Islands (British)
+    ("Q1234", "Q1243", ("Virgin Islands (British)", "British Virgin Islands")),
+    # United Kingdom -> Cayman Islands
+    ("Q1234", "Q1040", ("Cayman Islands",)),
 )
 
 # Never dependencies, whatever the list says: a state that shares a country's
