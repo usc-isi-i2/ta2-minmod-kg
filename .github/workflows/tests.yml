@@ -45,6 +45,8 @@ jobs:
             tests/test_grade_tonnage_model.py \
             tests/test_misc.py \
             tests/models/kgrel/custom_types/test_site_score.py \
+            tests/models/kgrel/test_dedup_mineral_site.py \
+            tests/misc/test_coord_precision.py \
             tests/libraries/rdf/test_rdf_model.py \
             tests/etl/test_geochem_jsonld.py \
             tests/services/test_paper_jsonld.py \

@@ -15,6 +15,7 @@ from minmodkg.models.kgrel.views.mineral_inventory_view import (
     DedupMineralInventoryView,
     MineralInventoryView,
 )
+from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.typing import InternalID
 from sqlalchemy import (
     Engine,
@@ -230,6 +231,7 @@ class MineralSiteService:
             dedup_site = DedupMineralSite.from_sites(
                 existing_sites + [site_and_inv],
                 dedup_site_id=site_and_inv.ms.dedup_site_id,
+                crs_names=EntityService.get_instance().get_crs_name(),
             )
             if len(existing_sites) == 0:
                 session.add(dedup_site.dms)
@@ -322,7 +324,9 @@ class MineralSiteService:
             ]
             all_sites.append(site_and_inv)
             dms = DedupMineralSite.from_sites(
-                all_sites, dedup_site_id=site_and_inv.ms.dedup_site_id
+                all_sites,
+                dedup_site_id=site_and_inv.ms.dedup_site_id,
+                crs_names=EntityService.get_instance().get_crs_name(),
             )
 
             # step 2: write data
@@ -435,7 +439,9 @@ class MineralSiteService:
                 # update the dedup site
                 group_msi = [id2msi[site_id] for site_id in group]
                 dedup_site = DedupMineralSite.from_sites(
-                    group_msi, dedup_site_id=dedup_site_id
+                    group_msi,
+                    dedup_site_id=dedup_site_id,
+                    crs_names=EntityService.get_instance().get_crs_name(),
                 )
                 if dedup_site_id not in affected_dedup_ids:
                     session.add(dedup_site.dms)
@@ -728,6 +734,7 @@ class MineralSiteService:
                 dms_id: DedupMineralSite.from_sites(
                     list(msis.values()),
                     dedup_site_id=dms_id,
+                    crs_names=EntityService.get_instance().get_crs_name(),
                 )
                 for dms_id, msis in dedup_groups.items()
             }
@@ -761,6 +768,7 @@ class MineralSiteService:
                 dms = DedupMineralSite.from_sites(
                     msis,
                     dedup_site_id=dms_id,
+                    crs_names=EntityService.get_instance().get_crs_name(),
                 )
                 new_dedup_sites.append(dms.get_update_args())
                 output_dedup_sites[dms_id] = dms
