@@ -109,7 +109,11 @@ def refresh_dedup_sites(
                 delete(DedupMineralSite).where(DedupMineralSite.id == dedup_id)
             )
             continue
-        dedup = DedupMineralSite.from_sites(members, dedup_site_id=dedup_id)
+        dedup = DedupMineralSite.from_sites(
+            members,
+            dedup_site_id=dedup_id,
+            crs_names=EntityService.get_instance().get_crs_name(),
+        )
         session.execute(dedup.dms.get_update_query())
         session.add_all(dedup.invs)
 
@@ -160,7 +164,9 @@ def save_postgres(
             msi.ms.dedup_site_id = MineralSite.get_dedup_id([msi.ms.site_id])
             session.add(
                 DedupMineralSite.from_sites(
-                    [msi], dedup_site_id=msi.ms.dedup_site_id
+                    [msi],
+                    dedup_site_id=msi.ms.dedup_site_id,
+                    crs_names=entser.get_crs_name(),
                 ).dms
             )
         affected_dedups.add(msi.ms.dedup_site_id)

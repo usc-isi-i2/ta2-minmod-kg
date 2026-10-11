@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional, Sequence, TypedDict
+from typing import Mapping, Optional, Sequence, TypedDict
 
+from minmodkg.misc.coord_precision import SourceCoordinate, finest_refinement
 from minmodkg.misc.utils import makedict
 from minmodkg.models.kg.base import MINMOD_NS
 from minmodkg.models.kgrel.base import Base, GeologyInfo
@@ -115,6 +116,7 @@ class DedupMineralSite(MappedAsDataclass, Base):
         sites: Sequence[MineralSiteAndInventory],
         *,
         is_site_ranked: bool,
+        crs_names: Mapping[str, str],
     ) -> DedupMineralSiteAndInventory:
         assert is_site_ranked, "Only support merging ranked sites"
         rank_dedup_sites = sorted(
@@ -170,13 +172,22 @@ class DedupMineralSite(MappedAsDataclass, Base):
             ),
             ranked_deposit_types=ranked_deposit_types,
             top1_deposit_type=top1_deposit_type,
-            coordinates=next(
-                (
-                    site.coordinates
-                    for site, _ in rank_dedup_sites
-                    if site.coordinates is not None
+            coordinates=prefer_refined_coordinate(
+                next(
+                    (
+                        site.coordinates
+                        for site, _ in rank_dedup_sites
+                        if site.coordinates is not None
+                    ),
+                    None,
                 ),
-                None,
+                sorted(
+                    (msi.ms for msi in sites),
+                    key=lambda ms: ms2score[ms.site_id],
+                    reverse=True,
+                ),
+                ms2score,
+                crs_names,
             ),
             country=next(
                 (
@@ -228,6 +239,8 @@ class DedupMineralSite(MappedAsDataclass, Base):
         cls,
         sites: Sequence[MineralSiteAndInventory],
         dedup_site_id: Optional[InternalID] = None,
+        *,
+        crs_names: Mapping[str, str],
     ) -> DedupMineralSiteAndInventory:
         _rank_ss: list[tuple[MineralSite, SiteScore]] = sorted(
             (
@@ -258,6 +271,12 @@ class DedupMineralSite(MappedAsDataclass, Base):
                 and site.location_view.lon is not None
             ),
             None,
+        )
+        coordinates = prefer_refined_coordinate(
+            coordinates,
+            rank_sites,
+            {s.site_id: score for s, score in _rank_ss},
+            crs_names,
         )
 
         country = next(
@@ -514,3 +533,58 @@ def top_5_deposit_types(
             reverse=True,
         )[:5]
     ]
+
+
+def prefer_refined_coordinate(
+    picked: Optional[RefGeoCoordinate],
+    ranked_sites: Sequence[MineralSite],
+    scores: Mapping[InternalID, SiteScore],
+    crs_names: Mapping[str, str],
+) -> Optional[RefGeoCoordinate]:
+    """On a trust-score tie, a record whose coordinate refines the picked one --
+    strictly more precise, and inside its rounding box, so the same spot written
+    with more real digits (see minmodkg.misc.coord_precision) -- replaces it.
+    An expert/curator record or a higher score is never overridden, and a more
+    precise coordinate somewhere else is not a refinement: `picked` stands."""
+    candidates = [
+        site
+        for site in ranked_sites
+        if site.location_view.lat is not None and site.location_view.lon is not None
+    ]
+    if picked is None or len(candidates) < 2:
+        return picked
+    top = scores[candidates[0].site_id]
+    if top.is_from_user() or scores[picked.refid].score != top.score:
+        return picked
+    first = _source_coordinate(candidates[0], crs_names)
+    tied = [
+        coord
+        for site in candidates[1:]
+        if scores[site.site_id].score == top.score
+        and (coord := _source_coordinate(site, crs_names)) is not None
+    ]
+    if first is None or not tied:
+        return picked
+    better = finest_refinement(first, tied)
+    if better is None:
+        return picked
+    return RefGeoCoordinate(GeoCoordinate(better.lat, better.lon), better.id)
+
+
+def _source_coordinate(
+    site: MineralSite, crs_names: Mapping[str, str]
+) -> Optional[SourceCoordinate]:
+    location = site.location
+    if location is None or location.coordinates is None:
+        return None
+    try:
+        crs = location.crs_name(crs_names)
+    except KeyError:
+        return None
+    return SourceCoordinate(
+        site.site_id,
+        location.coordinates,
+        crs,
+        site.location_view.lat,
+        site.location_view.lon,
+    )

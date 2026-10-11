@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Annotated, Optional
+from typing import Annotated, Mapping, Optional
 
 import shapely.wkt
 from minmodkg.misc.geo import reproject_geometry
@@ -52,6 +52,12 @@ class Location:
             crs=self.crs,
             location=self.coordinates,
         )
+
+    def crs_name(self, crss: Mapping[str, str]) -> str:
+        """The coordinates' CRS as "EPSG:<code>"; none given means EPSG:4326."""
+        if self.crs is None or self.crs.normalized_uri is None:
+            return "EPSG:4326"
+        return crss[self.crs.normalized_uri]
 
 
 @dataclass
@@ -118,10 +124,7 @@ class LocationView(GeoCoordinate):
     def from_location(location: Location, crss: dict[str, str]) -> LocationView:
         view = LocationView()
         if location.coordinates is not None:
-            if location.crs is None or location.crs.normalized_uri is None:
-                crs = "EPSG:4326"
-            else:
-                crs = crss[location.crs.normalized_uri]
+            crs = location.crs_name(crss)
 
             # TODO: fix this nan
             if "nan" in location.coordinates.lower():
