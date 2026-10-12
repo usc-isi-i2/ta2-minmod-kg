@@ -17,11 +17,15 @@ from minmodkg.models.kg.candidate_entity import CandidateEntity
 from minmodkg.models.kg.location_info import LocationInfo
 from minmodkg.models.kg.mineral_inventory import MineralInventory
 from minmodkg.models.kg.reference import Document, Reference
-from minmodkg.models.kgrel.mineral_site import MineralSite
+from minmodkg.models.kgrel.custom_types import Location, LocationView
+from minmodkg.models.kgrel.dedup_mineral_site import DedupMineralSite
+from minmodkg.models.kgrel.entities.crs import CRS
+from minmodkg.models.kgrel.mineral_site import MineralSite, MineralSiteAndInventory
 from minmodkg.models.kgrel.user import User
 from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.services.mineral_site import ArgumentError, MineralSiteService
 from sqlalchemy import Engine
+from sqlalchemy.orm import Session
 from tests.utils import load_mineral_sites
 
 
@@ -355,3 +359,84 @@ class TestLinkMineralSite(TestMSData):
             ("site__mrdata-usgs-gov-mrds__10280772__umn", 0.1),
             ("site__mrdata-usgs-gov-mrds__10280772__sri", 0.1),
         ]
+
+
+class StubEntityService:
+    """Stands in for EntityService.get_instance(): only the CRS names, counted."""
+
+    def __init__(self, crs_names: dict[str, str]):
+        self.crs_names, self.calls = crs_names, 0
+
+    def get_crs_name(self) -> dict[str, str]:
+        self.calls += 1
+        return self.crs_names
+
+
+def system_site(record_id: str, wkt: str, crs_names: dict, dedup_site_id=None):
+    """A system record (score 0.5) of one source; main keeps the highest record_id."""
+    site_id = f"site__test__{record_id}"
+    crs = CandidateEntity(
+        source="test", confidence=1.0, normalized_uri=NS_MR.uristr("Q701")
+    )
+    location = Location(crs=crs, coordinates=wkt)
+    return MineralSiteAndInventory.from_dict(
+        {
+            "ms": {
+                "site_id": site_id,
+                "dedup_site_id": dedup_site_id or "",  # "": create() assigns one
+                "source_id": "https://example.org/source",
+                "source_score": 0.5,
+                "record_id": record_id,
+                "location": location.to_dict(),
+                "location_view": LocationView.from_location(
+                    location, crs_names
+                ).to_dict(),
+                "created_by": "https://minmod.isi.edu/users/s/test",
+                "modified_at": 1,
+            }
+        }
+    )
+
+
+class TestTieBreakOnCreate:
+    def test_create_reelects_with_the_tie_break(self, kgrel: Engine, monkeypatch):
+        # MineralSiteService.create re-elects the merged site from its members; the
+        # CRS names it needs come from EntityService.get_instance(), stubbed here
+        stub = StubEntityService({NS_MR.uristr("Q701"): "EPSG:4326"})
+        monkeypatch.setattr(EntityService, "instance", stub)
+        service = MineralSiteService(kgrel)
+
+        service.create(system_site("b", "POINT(-110.9 30.0)", stub.crs_names))
+        dedup_id = MineralSite.get_dedup_id(["site__test__b"])
+        with Session(kgrel) as session:
+            assert (
+                session.get(DedupMineralSite, dedup_id).coordinates.refid
+                == "site__test__b"
+            )
+
+        # same score, ranked after "b", the same spot with more digits: it wins
+        service.create(
+            system_site("a", "POINT(-110.9149 30.0142)", stub.crs_names, dedup_id)
+        )
+        with Session(kgrel) as session:
+            c = session.get(DedupMineralSite, dedup_id).coordinates
+        assert c.refid == "site__test__a" and (c.value.lat, c.value.lon) == (
+            30.0142,
+            -110.9149,
+        )
+        assert stub.calls == 2
+
+
+def test_entity_service_is_a_cached_singleton(monkeypatch):
+    monkeypatch.setattr(EntityService, "instance", None)
+    reads = []
+
+    def get_crs(self):
+        reads.append(1)
+        return [CRS(id="Q701", name="EPSG:4326")]
+
+    monkeypatch.setattr(EntityService, "get_crs", get_crs)
+    service = EntityService.get_instance()
+    assert EntityService.get_instance() is service
+    assert service.get_crs_name() == {NS_MR.uristr("Q701"): "EPSG:4326"}
+    assert service.get_crs_name() is service.get_crs_name() and len(reads) == 1
