@@ -329,6 +329,7 @@ class MineralSiteETLService(BaseFileService[MineralSiteETLServiceConstructArgs])
         output_dedup_inventories = []
         output_sites = []
         output_inventories = []
+        crs_names = FileEntityService(args["entity_dir"].get_path()).get_crs_name()
         for lst in tqdm(
             dedup_sites.values(),
             total=len(dedup_sites),
@@ -339,6 +340,7 @@ class MineralSiteETLService(BaseFileService[MineralSiteETLServiceConstructArgs])
                 lst,
                 [id2site[rms.site_id] for dms in lst for rms in dms.ranked_sites],
                 is_site_ranked=True,
+                crs_names=crs_names,
             )
             output_dedup_sites.append(dedup_site.dms.to_dict())
             output_dedup_inventories.extend([inv.to_dict() for inv in dedup_site.invs])
@@ -398,7 +400,7 @@ class MergeFn:
         return group, cls.get_instance(workdir, entity_dir).invoke(**kwargs)
 
     @cache(
-        backend=FileSqliteBackend.factory(filename="merge-v107.sqlite"),
+        backend=FileSqliteBackend.factory(filename="merge-v108.sqlite"),
         cache_ser_args={
             "infiles": lambda lst: orjson.dumps(
                 sorted(x.get_ident() for x in lst)
@@ -433,7 +435,9 @@ class MergeFn:
                 lst_msi.append(norm_site)
 
         lst_dms = [
-            DedupMineralSite.from_sites(sites)
+            DedupMineralSite.from_sites(
+                sites, crs_names=self.entity_service.get_crs_name()
+            )
             for dedup_id, sites in group_by(
                 lst_msi, lambda site: site.ms.dedup_site_id
             ).items()
