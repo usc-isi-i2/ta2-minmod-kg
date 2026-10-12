@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Iterable, Literal, Optional, Sequence
 
 from minmodkg.misc.utils import norm_literal
@@ -65,21 +66,7 @@ class KGSyncListener(Listener):
         ng = kgms.to_graph()
         og = self._get_mineral_site_graph_by_uri(kgms.uri)
 
-        current_triples = {(s, p, norm_literal(o)) for s, p, o in og}
-        new_triples = {(s, p, norm_literal(o)) for s, p, o in ng}
-
-        ns_manager = MINMOD_KG.ns.rdflib_namespace_manager
-
-        del_triples = [
-            (s.n3(ns_manager), p.n3(ns_manager), o.n3(ns_manager))
-            for s, p, o in current_triples.difference(new_triples)
-        ]
-        add_triples = [
-            (s.n3(ns_manager), p.n3(ns_manager), o.n3(ns_manager))
-            for s, p, o in new_triples.difference(current_triples)
-        ]
-
-        MINMOD_KG.delete_insert(del_triples, add_triples)
+        self._sync_graph(og, ng)
 
     def handle_same_as_update(
         self,
@@ -132,21 +119,34 @@ class KGSyncListener(Listener):
         ng = kgsample.to_graph()
         og = self._get_sample_graph_by_uri(kgsample.uri)
 
-        current_triples = {(s, p, norm_literal(o)) for s, p, o in og}
-        new_triples = {(s, p, norm_literal(o)) for s, p, o in ng}
+        self._sync_graph(og, ng)
+
+    def _sync_graph(self, og: Graph, ng: Graph):
+        """Replace the stored graph `og` with the model's graph `ng`.
+
+        `norm_literal` is only the comparison key. We delete the terms exactly
+        as they are stored and insert the model's own terms: deleting the
+        normalized `xsd:double` terms never matched the stored `xsd:decimal`
+        ones and left them behind as orphans (#107).
+        """
+        old, new = defaultdict(list), defaultdict(list)
+        for g, terms in [(og, old), (ng, new)]:
+            for s, p, o in g:
+                terms[(s, p, norm_literal(o))].append((s, p, o))
 
         ns_manager = MINMOD_KG.ns.rdflib_namespace_manager
-
-        del_triples = [
-            (s.n3(ns_manager), p.n3(ns_manager), o.n3(ns_manager))
-            for s, p, o in current_triples.difference(new_triples)
-        ]
-        add_triples = [
-            (s.n3(ns_manager), p.n3(ns_manager), o.n3(ns_manager))
-            for s, p, o in new_triples.difference(current_triples)
-        ]
-
-        MINMOD_KG.delete_insert(del_triples, add_triples)
+        MINMOD_KG.delete_insert(
+            [
+                (s.n3(ns_manager), p.n3(ns_manager), o.n3(ns_manager))
+                for key in old.keys() - new.keys()
+                for s, p, o in old[key]
+            ],
+            [
+                (s.n3(ns_manager), p.n3(ns_manager), o.n3(ns_manager))
+                for key in new.keys() - old.keys()
+                for s, p, o in new[key]
+            ],
+        )
 
     def _get_sample_graph_by_uri(self, uri: IRI | URIRef) -> Graph:
         # Sample has no owl:sameAs of its own, but excluding it here too is harmless

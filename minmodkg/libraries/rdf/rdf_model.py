@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -228,9 +229,9 @@ class RDFModel:
                         (
                             subj,
                             prop.pred.reluri,
-                            MyLiteral(x, datatype=prop.datatype).n3(
-                                RDFModel.namespace.rdflib_namespace_manager
-                            ),
+                            MyLiteral(
+                                lexical(x, prop.datatype), datatype=prop.datatype
+                            ).n3(RDFModel.namespace.rdflib_namespace_manager),
                         )
                     )
             else:
@@ -238,9 +239,9 @@ class RDFModel:
                     (
                         subj,
                         prop.pred.reluri,
-                        MyLiteral(value, datatype=prop.datatype).n3(
-                            RDFModel.namespace.rdflib_namespace_manager
-                        ),
+                        MyLiteral(
+                            lexical(value, prop.datatype), datatype=prop.datatype
+                        ).n3(RDFModel.namespace.rdflib_namespace_manager),
                     )
                 )
         for name, prop in schema.ref_objectprops.items():
@@ -285,7 +286,9 @@ class RDFModel:
                         (
                             subj,
                             prop.pred.uri,
-                            RDFLiteral(x, datatype=prop.datatype),
+                            RDFLiteral(
+                                lexical(x, prop.datatype), datatype=prop.datatype
+                            ),
                         )
                     )
             else:
@@ -293,7 +296,9 @@ class RDFModel:
                     (
                         subj,
                         prop.pred.uri,
-                        RDFLiteral(value, datatype=prop.datatype),
+                        RDFLiteral(
+                            lexical(value, prop.datatype), datatype=prop.datatype
+                        ),
                     )
                 )
         for name, prop in schema.ref_objectprops.items():
@@ -370,6 +375,14 @@ class RDFModel:
             }
 
         raise NotImplementedError(typeorigin)
+
+
+def lexical(value: Any, datatype: Optional[URIRef]) -> Any:
+    """xsd:decimal has no exponent notation, so write a float such as 5e-05 as
+    0.00005. Other values are returned unchanged."""
+    if datatype == XSD.decimal and isinstance(value, float):
+        return format(Decimal(repr(value)), "f")
+    return value
 
 
 def norm_literal(value: Annotated[Any, Literal]) -> Any:
