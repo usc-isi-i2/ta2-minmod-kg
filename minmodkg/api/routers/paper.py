@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Body, HTTPException, Query, Response, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Header,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from minmodkg.api.dependencies import (
     CurrentUserDep,
     PaperServiceDep,
@@ -161,3 +170,34 @@ def get_paper_samples(
         "total": total,
         "items": [OutputPublicSample.from_kgrel(s).to_dict() for s in samples],
     }
+
+
+@router.get("/papers/{paper_id}/jsonld")
+def get_paper_jsonld(
+    paper_id: str,
+    paper_service: PaperServiceDep,
+    if_none_match: Annotated[Optional[str], Header()] = None,
+):
+    """The paper's canonical JSON-LD, with every edit published so far."""
+    if GEOCHEM_JSONLD_DIR is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="This server is not configured to serve GeoChem papers.",
+        )
+    paper = get_paper_or_404(paper_service, paper_id)
+    try:
+        body = paper_service.get_jsonld(paper, GEOCHEM_JSONLD_DIR).encode()
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"The JSON-LD file of paper {paper_id!r} is missing.",
+        )
+
+    etag = f'"{hashlib.sha256(body).hexdigest()[:32]}"'
+    if if_none_match is not None and etag in if_none_match:
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag}
+        )
+    return Response(
+        content=body, media_type="application/ld+json", headers={"ETag": etag}
+    )

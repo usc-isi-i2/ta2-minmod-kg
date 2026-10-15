@@ -25,14 +25,8 @@ from minmodkg.services.sync.listener import Listener
 from minmodkg.typing import InternalID
 
 
-class GeoChemBackupListener(Listener):
-    """Writes edits of GeoChem papers' sites and samples back into the
-    papers' JSON-LD files. Runs apart from MinMod's backup, so a failure here
-    only holds up GeoChem write-back."""
-
-    def __init__(self, jsonld_dir: Path):
-        super().__init__()
-        self.jsonld_dir = jsonld_dir
+class GeoChemJournal(Listener):
+    """Collects the edits of GeoChem papers' sites and samples, per paper."""
 
     def handle_begin(self, events: Sequence[EventLog]):
         self.routing = GeoChemRouting()
@@ -88,16 +82,30 @@ class GeoChemBackupListener(Listener):
     def handle_sample_update(self, event: EventLog, sample: Sample):
         self.add(self.routing.sample_paper(sample), sample.to_kg())
 
+    def apply(self, paper_id: str, doc: dict) -> None:
+        """Apply the paper's collected edits to its JSON-LD document."""
+        for item, edit in self.journal.get(paper_id, []):
+            if isinstance(item, KGSample):
+                apply_sample(doc, item)
+            else:
+                apply_site(doc, item, edit)
+
+
+class GeoChemBackupListener(GeoChemJournal):
+    """Writes edits of GeoChem papers' sites and samples back into the
+    papers' JSON-LD files. Runs apart from MinMod's backup, so a failure here
+    only holds up GeoChem write-back."""
+
+    def __init__(self, jsonld_dir: Path):
+        super().__init__()
+        self.jsonld_dir = jsonld_dir
+
     def handle_end(self, events: Sequence[EventLog]):
         papers = {p.paper_id: p for p in self.routing.papers.values()}
-        for paper_id, items in self.journal.items():
+        for paper_id in self.journal:
             path = self.jsonld_dir / papers[paper_id].file
             doc = read_paper_file(path)
-            for item, edit in items:
-                if isinstance(item, KGSample):
-                    apply_sample(doc, item)
-                else:
-                    apply_site(doc, item, edit)
+            self.apply(paper_id, doc)
             write_paper_file(path, doc)
 
         if self.journal and (self.jsonld_dir / ".git").exists():
