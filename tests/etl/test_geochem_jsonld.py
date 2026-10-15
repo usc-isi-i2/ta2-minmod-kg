@@ -161,7 +161,7 @@ def test_site_edit_is_recorded():
     apply_site(paper, replace(site, name="Suttsu (edited)"), edit)
     apply_site(paper, replace(site, name="Suttsu (edited)"), edit)
     history = paper["deposits"][0]["edit_history"]
-    assert history == [edit.to_dict(), edit.to_dict()]
+    assert history == [edit.to_dict()]
     assert read_paper(paper, resolver()).sites[0].name == "Suttsu (edited)"
 
 

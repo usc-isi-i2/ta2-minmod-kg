@@ -11,18 +11,22 @@ from minmodkg.etl.geochem_jsonld import (
     clean,
     deposit_record_ids,
     deposit_sites,
+    dump_paper,
     node_id,
     paper_source_id,
+    read_paper_file,
     sample_key,
     write_paper_file,
 )
 from minmodkg.models.kgrel.base import engine
 from minmodkg.models.kgrel.dedup_mineral_site import DedupMineralSite
+from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.mineral_site import MineralSite, MineralSiteAndInventory
 from minmodkg.models.kgrel.paper import Paper
 from minmodkg.models.kgrel.sample import Sample
 from minmodkg.models.kgrel.views.mineral_inventory_view import MineralInventoryView
 from minmodkg.services.mineral_site import MineralSiteService
+from minmodkg.services.sync.geochem_listener import GeoChemJournal
 from minmodkg.transformations import make_sample_id
 from minmodkg.typing import InternalID
 from sqlalchemy import Engine, distinct, exists, func, select
@@ -179,6 +183,31 @@ class PaperService:
                 page = page.limit(limit)
             samples = list(session.execute(page).scalars())
         return samples, total
+
+    def get_jsonld(self, paper: Paper, jsonld_dir: Path) -> str:
+        """The paper's JSON-LD as MinMod has it now: its file plus the edits
+        not yet written back to it."""
+        # events before the file: an edit written back in between is then in
+        # both, and applying it again changes nothing
+        with Session(self.engine) as session:
+            events = (
+                session.execute(
+                    select(EventLog)
+                    .where(EventLog.geochem_synced.is_(False))
+                    .order_by(EventLog.id)
+                )
+                .scalars()
+                .all()
+            )
+        journal = GeoChemJournal()
+        journal.handle(events)
+
+        path = jsonld_dir / paper.file
+        if paper.paper_id not in journal.journal:
+            return path.read_text()
+        doc = read_paper_file(path)
+        journal.apply(paper.paper_id, doc)
+        return dump_paper(doc)
 
     def register(
         self,

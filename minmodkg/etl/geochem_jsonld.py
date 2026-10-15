@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -507,7 +508,7 @@ def apply_site(
     paper: dict, site: KGMineralSite, edit: Optional[EditEvent] = None
 ) -> None:
     """Write a site onto its deposit node, appending one for a new site. An
-    `edit` is appended to the deposit's edit_history."""
+    `edit` is appended to the deposit's edit_history once."""
     deposit = find_deposit(paper, site.id)
     if deposit is None:
         doi_slug = slugify(str(clean(paper.get("paper_doi"))))
@@ -551,7 +552,10 @@ def apply_site(
     put_deletion(deposit, site)
 
     if edit is not None:
-        deposit.setdefault("edit_history", []).append(edit.to_dict())
+        # an edit already written back stays a single entry when applied again
+        history = deposit.setdefault("edit_history", [])
+        if edit.to_dict() not in history:
+            history.append(edit.to_dict())
 
 
 def apply_sample(paper: dict, sample: KGSample) -> None:
@@ -623,6 +627,13 @@ def read_paper_file(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
-def write_paper_file(path: Path, paper: dict) -> None:
+def dump_paper(paper: dict) -> str:
     # same serialization as the extraction output, so diffs stay minimal
-    path.write_text(json.dumps(paper, indent=2))
+    return json.dumps(paper, indent=2)
+
+
+def write_paper_file(path: Path, paper: dict) -> None:
+    # replaced in one step, so readers never see a half-written file
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(dump_paper(paper))
+    os.replace(tmp, path)
