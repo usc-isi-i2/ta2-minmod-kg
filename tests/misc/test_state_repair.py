@@ -1,0 +1,510 @@
+from __future__ import annotations
+
+import os
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import pytest
+import serde.json
+from minmodkg.etl.kgrel_entity import EntityDeserFn
+from minmodkg.misc.state_repair import StateCountryIndex, drop_admin_words, fold_name
+from minmodkg.models.kgrel.entities.state_or_province import StateOrProvince
+from minmodkg.services.kgrel_entity import FileEntityService
+from statickg.models.file_and_path import BaseType, InputFile, RelPath
+
+ENTITY_DIR = Path(__file__).parent.parent / "resources/kgdata/entities"
+
+
+@dataclass
+class State:
+    id: str
+    name: str
+    country: Optional[str]
+    state_code: Optional[str] = None
+
+
+IN, PK, AL, BO, CO = "IN", "PK", "AL", "BO", "CO"
+STATES = [
+    State("odisha", "Odisha", IN, "OR"),
+    State("punjab_in", "Punjab", IN, "PB"),
+    State("punjab_pk", "Punjab", PK, "PB"),
+    State("berat_county", "Berat County", AL, "01"),
+    State("berat_district", "Berat District", AL, "BR"),
+    State("la_paz", "La Paz Department", BO, "L"),
+    State("oruro", "Oruro Department", BO, "O"),
+    State("colorado", "Colorado", CO, "CO"),
+    State("boyaca", "Boyacá", CO, "BOY"),
+]
+
+
+def test_alias_resolves():
+    idx = StateCountryIndex.build(STATES, {"odisha": ["Orissa"]})
+    assert idx.resolve("Orissa", [IN]) == "odisha"
+    # folded like real names: case, accents and punctuation do not matter
+    assert idx.resolve("ORISSA", [IN]) == "odisha"
+    assert idx.resolve("Orissá", [IN]) == "odisha"
+    # and through the repair of a state that contradicts the recorded country
+    assert idx.repair("punjab_pk", "Orissa", [IN]) == ("repoint", "odisha")
+
+
+def test_alias_stays_in_its_country():
+    idx = StateCountryIndex.build(STATES, {"odisha": ["Orissa"]})
+    assert idx.resolve("Orissa", [PK]) is None
+
+
+def test_alias_is_exact_only():
+    # aliases never go through the admin-word-free tier
+    idx = StateCountryIndex.build(STATES, {"odisha": ["Orissa"]})
+    assert idx.resolve("Orissa State", [IN]) is None
+
+
+def test_real_name_beats_an_alias():
+    # "Punjab" is a real name in India; the same string as an alias of another
+    # Indian state must not take it
+    idx = StateCountryIndex.build(STATES, {"odisha": ["Punjab"]})
+    assert idx.resolve("Punjab", [IN]) == "punjab_in"
+
+
+def test_same_alias_on_two_states_of_one_country_is_ambiguous():
+    idx = StateCountryIndex.build(
+        STATES, {"odisha": ["Kalinga"], "punjab_in": ["Kalinga"]}
+    )
+    assert idx.resolve("Kalinga", [IN]) is None
+    assert idx.repair("punjab_pk", "Kalinga", [IN]) == ("drop", None)
+
+
+def test_same_alias_in_two_countries_is_not_ambiguous():
+    idx = StateCountryIndex.build(
+        STATES, {"odisha": ["Kalinga"], "punjab_pk": ["Kalinga"]}
+    )
+    assert idx.resolve("Kalinga", [IN]) == "odisha"
+    assert idx.resolve("Kalinga", [PK]) == "punjab_pk"
+
+
+def test_alias_never_changes_a_match_made_without_it():
+    aliases = {
+        # "La Paz" resolves today through the admin-word-free tier
+        "oruro": ["La Paz"],
+        # "CO" resolves today through the code tier
+        "boyaca": ["CO"],
+        # "Berat" is ambiguous today (Berat County / Berat District): it must
+        # stay ambiguous, not fall through to an alias
+        "berat_district": ["Berat"],
+    }
+    idx = StateCountryIndex.build(STATES, aliases)
+    assert idx.resolve("La Paz", [BO]) == "la_paz"
+    assert idx.resolve("CO", [CO]) == "colorado"
+    assert idx.resolve("Berat", [AL]) is None
+
+
+def test_no_aliases_behaves_exactly_as_before():
+    states = _states(ENTITY_DIR)
+    before = StateCountryIndex.build(states)
+    for aliases in (None, {}, {s.id: [] for s in states}, {states[0].id: [" "]}):
+        assert StateCountryIndex.build(states, aliases) == before
+
+
+def test_aliases_cannot_break_any_existing_match():
+    """On the real 5,084 states: every real name, admin-word-free name and code
+    that resolves today becomes an alias of a different state in its country.
+    Each must still resolve to what it resolves to without aliases."""
+    states = _states(ENTITY_DIR)
+    by_country: dict[str, list[StateOrProvince]] = {}
+    for s in states:
+        by_country.setdefault(s.country, []).append(s)
+
+    probes: set[tuple[str, str]] = set()
+    for s in states:
+        probes.add((s.name, s.country))
+        probes.add((drop_admin_words(fold_name(s.name)), s.country))
+        if s.state_code:
+            probes.add((s.state_code, s.country))
+
+    plain = StateCountryIndex.build(states)
+    expected = {}
+    aliases: dict[str, list[str]] = {}
+    for name, country in sorted(probes):
+        target = plain.resolve(name, [country])
+        if target is None:
+            continue
+        decoy = next((s for s in by_country[country] if s.id != target), None)
+        if decoy is None:
+            continue
+        expected[(name, country)] = target
+        aliases.setdefault(decoy.id, []).append(name)
+
+    noisy = StateCountryIndex.build(states, aliases)
+    assert len(expected) > 9000
+    for (name, country), target in expected.items():
+        assert noisy.resolve(name, [country]) == target, (name, country)
+
+
+def test_alt_names_column_is_read_into_the_entity_json(tmp_path: Path):
+    entity_dir = tmp_path / "entities"
+    entity_dir.mkdir()
+    shutil.copy(ENTITY_DIR / "country.csv", entity_dir)
+    (entity_dir / "state_or_province.csv").write_text(
+        "minmod_id,id,name,country_id,country_code,country_name,state_code,type,latitude,longitude,alt names\r\n"
+        "Q3700,4013,Odisha,101,IN,India,OR,,20.9516658,85.0985236,Orissa\r\n"
+        "Q3701,4015,Punjab,101,IN,India,PB,,31.1471305,75.3412179, Panjab |  | Pañjāb \r\n"
+        "Q3702,4014,Puducherry,101,IN,India,PY,,11.9415915,79.8083133,\r\n"
+        "Q3703,4012,Nagaland,101,IN,India,NL,,26.1584354,94.5624426,|",
+        encoding="utf-8",
+    )
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    (tmp_path / "work").mkdir()
+    EntityDeserFn(tmp_path / "work").invoke(
+        infile=InputFile.from_relpath(
+            RelPath(BaseType.REPO, tmp_path, "entities/state_or_province.csv")
+        ),
+        outdir=outdir,
+    )
+    records = serde.json.deser(outdir / "state_or_province.json")["StateOrProvince"]
+    assert [r.get("aliases") for r in records] == [
+        ["Orissa"],
+        ["Panjab", "Pañjāb"],
+        None,
+        None,
+    ]
+    # Postgres loads these through from_dict, which leaves aliases out
+    assert StateOrProvince.from_dict(records[0]).to_dict() == {
+        "id": "Q3700",
+        "name": "Odisha",
+        "country": "Q1101",
+        "state_code": "OR",
+    }
+
+    entser = FileEntityService(outdir)
+    assert entser.get_state_or_province_aliases() == {
+        "Q3700": ["Orissa"],
+        "Q3701": ["Panjab", "Pañjāb"],
+    }
+    assert entser.get_state_or_province_index().resolve("Orissa", ["Q1101"]) == "Q3700"
+
+
+def test_entity_json_is_unchanged_without_alt_names(tmp_path: Path):
+    """No `alt names` column, or an empty one, writes exactly the JSON it did
+    before the column existed."""
+    header = "minmod_id,id,name,country_id,country_code,country_name,state_code,type,latitude,longitude"
+    rows = [
+        "Q3700,4013,Odisha,101,IN,India,OR,,20.9516658,85.0985236",
+        "Q3701,4015,Punjab,101,IN,India,PB,,31.1471305,75.3412179",
+    ]
+    outputs = []
+    for i, text in enumerate(
+        [
+            "\r\n".join([header] + rows),
+            "\r\n".join([header + ",alt names"] + [r + "," for r in rows]),
+        ]
+    ):
+        entity_dir = tmp_path / f"entities{i}"
+        entity_dir.mkdir()
+        shutil.copy(ENTITY_DIR / "country.csv", entity_dir)
+        (entity_dir / "state_or_province.csv").write_text(text, encoding="utf-8")
+        outdir = tmp_path / f"out{i}"
+        outdir.mkdir()
+        (tmp_path / f"work{i}").mkdir()
+        EntityDeserFn(tmp_path / f"work{i}").invoke(
+            infile=InputFile.from_relpath(
+                RelPath(BaseType.REPO, entity_dir, "state_or_province.csv")
+            ),
+            outdir=outdir,
+        )
+        outputs.append((outdir / "state_or_province.json").read_bytes())
+    assert outputs[0] == outputs[1]
+    assert b"aliases" not in outputs[0]
+
+
+# The checks below run on an entity directory: this repo's copy by default, or
+# a ta2-minmod-data checkout with MINMOD_ENTITY_DIR=<checkout>/data/entities.
+DATA_ENTITY_DIR = Path(os.environ.get("MINMOD_ENTITY_DIR", ENTITY_DIR))
+
+
+def test_no_alias_equals_a_real_name_in_its_country():
+    """Real names win over aliases, so such an alias would be dead vocabulary
+    that silently resolves to the other state. Catch it instead."""
+    states = _states(DATA_ENTITY_DIR)
+    by_id = {s.id: s for s in states}
+    real = {(s.country, fold_name(s.name)): s for s in states}
+    clashes = [
+        (sid, alias, real[(by_id[sid].country, fold_name(alias))].id)
+        for sid, names in _aliases(DATA_ENTITY_DIR).items()
+        for alias in names
+        if (by_id[sid].country, fold_name(alias)) in real
+    ]
+    assert clashes == []
+
+
+def test_every_alias_resolves_to_its_own_state():
+    """Also catches an alias two states of one country share, and one that an
+    admin-word-free name or a state code of the same country already takes."""
+    states = _states(DATA_ENTITY_DIR)
+    by_id = {s.id: s for s in states}
+    aliases = _aliases(DATA_ENTITY_DIR)
+    idx = StateCountryIndex.build(states, aliases)
+    dead = [
+        (sid, alias, idx.resolve(alias, [by_id[sid].country]))
+        for sid, names in aliases.items()
+        for alias in names
+        if idx.resolve(alias, [by_id[sid].country]) != sid
+    ]
+    assert dead == []
+
+
+def _states(entity_dir: Path) -> list[StateOrProvince]:
+    return EntityDeserFn.read_state_or_province(entity_dir / "state_or_province.csv")
+
+
+def _aliases(entity_dir: Path) -> dict[str, list[str]]:
+    return EntityDeserFn.read_state_or_province_aliases(
+        entity_dir / "state_or_province.csv"
+    )
+
+
+# Dependencies: a dropped state that names a listed dependency of a recorded
+# country moves the record to the dependency's country.
+
+DK, GL, NO, AT = "DK", "GL", "NO", "AT"
+DEP_STATES = STATES + [
+    State("burgenland", "Burgenland", AT, "1"),
+    State("rogaland", "Rogaland", NO, "11"),
+    State("hovedstaden", "Hovedstaden", DK, "84"),
+]
+DEPS = [(DK, GL, ("Greenland",))]
+
+
+def test_dependency_moves_a_dropped_state():
+    idx = StateCountryIndex.build(DEP_STATES, dependencies=DEPS)
+    # ProcMine picked Burgenland (Austria) for "Greenland" on a Danish record
+    assert idx.repair("burgenland", "Greenland", [DK]) == ("drop", None)
+    assert idx.dependency("burgenland", "Greenland", [DK]) == (DK, GL)
+    assert idx.dependency("burgenland", "GREENLAND", [DK, NO]) == (DK, GL)
+
+
+def test_dependency_never_touches_a_state_that_resolves():
+    # Denmark with its own "Greenland" row: the repair repoints, nothing moves
+    states = DEP_STATES + [State("dk_greenland", "Greenland", DK)]
+    idx = StateCountryIndex.build(states, dependencies=DEPS)
+    assert idx.repair("burgenland", "Greenland", [DK]) == ("repoint", "dk_greenland")
+    assert idx.dependency("burgenland", "Greenland", [DK]) is None
+
+
+def test_dependency_needs_a_contradiction():
+    idx = StateCountryIndex.build(DEP_STATES, dependencies=DEPS)
+    assert idx.repair("hovedstaden", "Greenland", [DK]) == ("keep", "hovedstaden")
+    assert idx.dependency("hovedstaden", "Greenland", [DK]) is None
+
+
+def test_dependency_needs_a_listed_name_exactly():
+    idx = StateCountryIndex.build(DEP_STATES, dependencies=DEPS)
+    assert idx.dependency("burgenland", "Greenland Region", [DK]) is None
+    assert idx.dependency("burgenland", None, [DK]) is None
+
+
+def test_dependency_needs_its_sovereign_recorded():
+    idx = StateCountryIndex.build(DEP_STATES, dependencies=DEPS)
+    assert idx.repair("burgenland", "Greenland", [NO]) == ("drop", None)
+    assert idx.dependency("burgenland", "Greenland", [NO]) is None
+
+
+def test_excluded_pairs_cannot_be_listed():
+    from minmodkg.misc.state_repair import DEPENDENCIES, NOT_DEPENDENCIES
+
+    assert not {(s, d) for s, d, _ in DEPENDENCIES} & NOT_DEPENDENCIES
+    for sovereign, dependency in NOT_DEPENDENCIES:
+        with pytest.raises(ValueError):
+            StateCountryIndex.build([], dependencies=[(sovereign, dependency, ("x",))])
+
+
+def test_dependencies_against_the_real_tables():
+    """Each listed pair names two countries of country.csv, and its names have
+    no state row under the sovereign: a dependency the table also models as a
+    state (Puerto Rico, Guadeloupe) resolves, and must not be listed."""
+    from minmodkg.misc.state_repair import DEPENDENCIES
+
+    countries = {
+        c.id for c in EntityDeserFn.read_country(DATA_ENTITY_DIR / "country.csv")
+    }
+    states = _states(DATA_ENTITY_DIR)
+    idx = StateCountryIndex.build(states, _aliases(DATA_ENTITY_DIR))
+    for sovereign, dependency, dep_names in DEPENDENCIES:
+        assert sovereign in countries and dependency in countries
+        assert sovereign != dependency
+        for name in dep_names:
+            assert idx.resolve(name, [sovereign]) is None, (sovereign, name)
+
+
+def test_no_state_moves_by_its_own_name():
+    states = _states(DATA_ENTITY_DIR)
+    idx = StateCountryIndex.build(states, _aliases(DATA_ENTITY_DIR))
+    assert [s.id for s in states if idx.dependency(s.id, s.name, [s.country])] == []
+
+
+def test_location_view_moves_the_country():
+    from minmodkg.models.kg.base import NS_MR
+    from minmodkg.models.kg.candidate_entity import CandidateEntity
+    from minmodkg.models.kgrel.custom_types.location import Location, LocationView
+
+    idx = StateCountryIndex.build(_states(ENTITY_DIR))
+
+    def cand(id=None, name=None):
+        return CandidateEntity(
+            source="test",
+            confidence=1.0,
+            observed_name=name,
+            normalized_uri=NS_MR.uristr(id) if id else None,
+        )
+
+    # France and Colombia recorded; ProcMine picked the Federal Dependencies
+    # of Venezuela for New Caledonia
+    location = Location(
+        country=[cand("Q1075"), cand("Q1047")],
+        state_or_province=[
+            cand("Q6964", "Territory Of New Caledonia And Dependencies")
+        ],
+    )
+    view = LocationView.from_location(location, {}, idx)
+    assert view.country == ["Q1154", "Q1047"]
+    assert view.state_or_province == []
+    # the KG side keeps what the source said
+    assert [NS_MR.id(c.normalized_uri) for c in location.country] == ["Q1075", "Q1047"]
+    # without the index, nothing moves
+    assert LocationView.from_location(location, {}, None).country == ["Q1075", "Q1047"]
+
+
+@pytest.mark.parametrize(
+    "picked, observed, dependency",
+    [
+        # MRDS 10061612 and 10062299: ProcMine picked the US Virgin Islands
+        ("Q6896", "British Virgin Islands", "Q1243"),
+        ("Q6896", "Virgin Islands (British)", "Q1243"),
+        # MRDS 10068643: ProcMine picked Cat Island (The Bahamas)
+        ("Q6239", "Cayman Islands", "Q1040"),
+    ],
+)
+def test_location_view_moves_uk_records_to_their_territory(picked, observed, dependency):
+    from minmodkg.models.kg.base import NS_MR
+    from minmodkg.models.kg.candidate_entity import CandidateEntity
+    from minmodkg.models.kgrel.custom_types.location import Location, LocationView
+
+    idx = StateCountryIndex.build(_states(ENTITY_DIR))
+
+    def cand(id, name=None):
+        return CandidateEntity(
+            source="test",
+            confidence=1.0,
+            observed_name=name,
+            normalized_uri=NS_MR.uristr(id),
+        )
+
+    location = Location(
+        country=[cand("Q1234", "United Kingdom")],
+        state_or_province=[cand(picked, observed)],
+    )
+    view = LocationView.from_location(location, {}, idx)
+    assert view.country == [dependency]
+    assert view.state_or_province == []
+    assert [NS_MR.id(c.normalized_uri) for c in location.country] == ["Q1234"]
+    # a name that is not listed exactly is dropped and stays in the UK
+    location.state_or_province = [cand(picked, observed + " Territory")]
+    view = LocationView.from_location(location, {}, idx)
+    assert (view.country, view.state_or_province) == (["Q1234"], [])
+
+
+# Katanga: a dropped "Katanga" on a DR Congo record takes the 2015 successor
+# province that contains its point.
+
+DRC, ZM, TZ = "Q1058", "Q1248", "Q1218"
+TANGA = "Q6152"  # Tanga (Tanzania): ProcMine's pick for every "Katanga"
+IN_PROVINCE = {
+    "Q3000": "POINT (27.479 -11.664)",  # Lubumbashi, Haut-Katanga
+    "Q3012": "POINT (25.473 -10.716)",  # Kolwezi, Lualaba
+    "Q3001": "POINT (24.99 -8.737)",  # Kamina, Haut-Lomami
+    "Q3021": "POINT (29.194 -5.947)",  # Kalemie, Tanganyika
+}
+
+
+def katanga_view(coordinates, name="Katanga", countries=(DRC,), crs=None, idx=None):
+    from minmodkg.models.kg.base import NS_MR
+    from minmodkg.models.kg.candidate_entity import CandidateEntity
+    from minmodkg.models.kgrel.custom_types.location import Location, LocationView
+
+    def cand(id, name=None):
+        return CandidateEntity(
+            source="test",
+            confidence=1.0,
+            observed_name=name,
+            normalized_uri=NS_MR.uristr(id),
+        )
+
+    location = Location(
+        country=[cand(c) for c in countries],
+        state_or_province=[cand(TANGA, name)],
+        crs=cand("Q999") if crs else None,
+        coordinates=coordinates,
+    )
+    idx = idx or StateCountryIndex.build(_states(ENTITY_DIR))
+    return LocationView.from_location(location, {NS_MR.uristr("Q999"): crs}, idx)
+
+
+@pytest.mark.parametrize("province", sorted(IN_PROVINCE))
+def test_katanga_takes_the_province_of_its_point(province):
+    view = katanga_view(IN_PROVINCE[province])
+    assert (view.country, view.state_or_province) == ([DRC], [province])
+
+
+@pytest.mark.parametrize(
+    "coordinates, name, crs, province",
+    [
+        ("POINT (27.479 -11.664)", "KATANGA PROVINCE", None, "Q3000"),
+        # Lubumbashi in UTM 35S, reprojected to WGS84 first
+        ("POINT (552207.75 8710556.02)", "Katanga", "EPSG:32735", "Q3000"),
+        ("MULTIPOINT ((27.479 -11.664), (27.4 -11.6))", "Katanga", None, "Q3000"),
+    ],
+)
+def test_katanga_names_points_and_crs(coordinates, name, crs, province):
+    assert katanga_view(coordinates, name, crs=crs).state_or_province == [province]
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        None,
+        # MRDS 10400590: 0.65 km from the Haut-Katanga / Lualaba border
+        "POINT (25.9324 -10.9712)",
+        # outside DR Congo: Lubumbashi with its latitude sign flipped, and Lusaka
+        "POINT (27.479 11.664)",
+        "POINT (28.28 -15.41)",
+        "POINT (0 0)",
+        "POINT (27.5 -11.5)",  # a round placeholder inside Haut-Katanga
+        "MULTIPOINT ((27.479 -11.664), (25.473 -10.716))",  # two provinces
+        "LINESTRING (27.4 -11.6, 27.5 -11.7)",
+        "POINT (nan nan)",
+    ],
+)
+def test_katanga_stays_empty(coordinates):
+    view = katanga_view(coordinates)
+    assert (view.country, view.state_or_province) == ([DRC], [])
+
+
+def test_katanga_never_another_name_or_country():
+    point = IN_PROVINCE["Q3000"]
+    # another name dropped in DR Congo is not filled
+    assert katanga_view(point, name="Tanga").state_or_province == []
+    # Katanga on a Zambian record is dropped and not filled; on a Tanzanian one
+    # Tanga is in the recorded country and kept
+    assert katanga_view(point, countries=(ZM,)).state_or_province == []
+    assert katanga_view(point, countries=(TZ,)).state_or_province == [TANGA]
+    # only a record whose recorded country is DR Congo alone
+    assert katanga_view(point, countries=(DRC, ZM)).state_or_province == []
+
+
+def test_katanga_never_changes_what_a_tier_resolves():
+    # an alias resolves "Katanga" to Lualaba: the point (Haut-Katanga) is not used
+    idx = StateCountryIndex.build(_states(ENTITY_DIR), {"Q3012": ["Katanga"]})
+    view = katanga_view(IN_PROVINCE["Q3000"], idx=idx)
+    assert view.state_or_province == ["Q3012"]
+    assert idx.katanga(TANGA, "Katanga", [DRC], IN_PROVINCE["Q3000"], "EPSG:4326") is None

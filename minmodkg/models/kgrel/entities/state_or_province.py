@@ -19,6 +19,9 @@ class StateOrProvince(MappedAsDataclass, Base):
     country: Mapped[Optional[InternalID]] = mapped_column(
         ForeignKey("country.id", ondelete="CASCADE")
     )
+    # ISO 3166-2 subdivision code, unique within a country ("CO" -> Colorado);
+    # only used to repair state assignments, not exported to the KG.
+    state_code: Mapped[Optional[str]] = mapped_column(default=None)
 
     @property
     def uri(self):
@@ -29,6 +32,7 @@ class StateOrProvince(MappedAsDataclass, Base):
             "id": self.id,
             "name": self.name,
             "country": self.country,
+            "state_code": self.state_code,
         }
 
     @classmethod
@@ -37,6 +41,7 @@ class StateOrProvince(MappedAsDataclass, Base):
             id=data["id"],
             name=data["name"],
             country=data["country"],
+            state_code=data.get("state_code"),
         )
 
     def to_kg(self) -> KGStateOrProvince:

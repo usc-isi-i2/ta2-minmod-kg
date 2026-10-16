@@ -85,6 +85,7 @@ def to_msi(site: KGMineralSite, entser: EntityService) -> MineralSiteAndInventor
         commodity_form_conversion=entser.get_commodity_form_conversion(),
         crs_names=entser.get_crs_name(),
         source_score=entser.get_data_source_score(),
+        state_index=entser.get_state_or_province_index(),
     )
     msi.ms.modified_at = time.time_ns()
     return msi

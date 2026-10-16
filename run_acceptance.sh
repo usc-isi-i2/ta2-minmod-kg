@@ -91,22 +91,26 @@ if [[ "$MODE" == "compare" ]]; then
   done < "$B"
 
   echo
-  echo "What this branch should do:"
+  echo "What the reprojection fix (#108) should do, if 'before' predates it:"
   echo "  lat_out_of_range_merged     24,818 -> 1   (Tagaung Taung is swapped in"
   echo "                                             the source JSON; needs a manual"
   echo "                                             fix in ta2-minmod-data, not code)"
   echo "  lat_out_of_range_raw        31,109 -> 1   (the same record)"
   echo "  merged_entities_total        UNCHANGED     <- if this moves, something is wrong"
   echo "  raw_sites_total              UNCHANGED     <- same"
-  echo "  merged_with_country          UNCHANGED     <- the fix never touches country"
-  echo "  merged_with_state            UNCHANGED     <- on this branch"
-  echo "  state_country_conflicts      UNCHANGED     <- Problem 2, a different branch"
   echo
-  echo "Only once fix/p2-state-repair is deployed as well:"
+  echo "What the state repair (fix/p2-state-repair) should do:"
   echo "  state_country_conflicts      5,856 -> 0"
-  echo "  merged_with_state            drops by ~671  (states the rule cannot"
-  echo "                                               resolve are dropped, not"
-  echo "                                               left wrong)"
+  echo "  merged_with_state            drops by 221  (5,543 states repointed and 92"
+  echo "                                               Katanga entities filled from"
+  echo "                                               their location; states the"
+  echo "                                               rule cannot resolve are"
+  echo "                                               dropped, not left wrong)"
+  echo "  merged_with_country          UNCHANGED     <- the count only: the country"
+  echo "                                               value changes for 80 entities"
+  echo "                                               (73 moved to a listed"
+  echo "                                               dependency, 7 by the"
+  echo "                                               country/state pairing fix)"
   echo
   echo "Full query output, including the five Alaska spot-check sites:"
   echo "  $OUT_ROOT/before/  and  $OUT_ROOT/after/"
@@ -123,7 +127,7 @@ mkdir -p "$OUT"
 echo "=== $MODE  ($(date -u '+%Y-%m-%dT%H:%M:%SZ')) ==="
 
 # 1. Environment. The merge-cache filename is the single most diagnostic fact
-#    here: if "after" still shows merge-v106, the merge was skipped and the
+#    here: if "after" does not list merge-v108, the merge was skipped and the
 #    numbers below cannot have changed.
 {
   echo "timestamp_utc      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
