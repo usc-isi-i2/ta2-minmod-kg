@@ -9,6 +9,7 @@ import orjson
 import serde.json
 import xxhash
 from libactor.cache import cache
+from minmodkg.misc.commodity_corrections import CommodityCorrections
 from minmodkg.misc.utils import group_by, makedict
 from minmodkg.models.kg.base import MINMOD_KG
 from minmodkg.models.kg.mineral_site import MineralSiteIdent
@@ -41,6 +42,8 @@ class MineralSiteETLServiceInvokeArgs(TypedDict):
     entity_dir: RelPath
 
     same_as_group: RelPath
+    # data/corrections/commodity.csv of the data repository; optional
+    commodity_corrections: NotRequired[RelPath]
 
     output: RelPath
 
@@ -239,6 +242,12 @@ class MineralSiteETLService(BaseFileService[MineralSiteETLServiceConstructArgs])
 
         entity_dir = args["entity_dir"].get_path()
 
+        # zero or one file: the list is optional
+        corrections_files = []
+        if (corrections := args.get("commodity_corrections")) is not None:
+            if corrections.get_path().exists():
+                corrections_files.append(InputFile.from_relpath(corrections))
+
         it: Iterable[tuple[SourceInfo, Path]] = get_parallel_executor(self.parallel)(
             typed_delayed(MergeFn.exec)(
                 self.workdir,
@@ -246,6 +255,7 @@ class MineralSiteETLService(BaseFileService[MineralSiteETLServiceConstructArgs])
                 group=group,
                 infiles=infiles,
                 sameas_file=dedup_files[group],
+                corrections_files=corrections_files,
                 outfile=merged_outdir
                 / group.source_name
                 / f"{group.bucket_no}.json{COMPRESSION}",
@@ -404,10 +414,17 @@ class MergeFn:
                 sorted(x.get_ident() for x in lst)
             ).decode(),
             "sameas_file": lambda x: x.get_ident(),
+            "corrections_files": lambda lst: orjson.dumps(
+                sorted(x.get_ident() for x in lst)
+            ).decode(),
         },
     )
     def invoke(
-        self, infiles: list[InputFile], sameas_file: InputFile, outfile: Path
+        self,
+        infiles: list[InputFile],
+        sameas_file: InputFile,
+        outfile: Path,
+        corrections_files: list[InputFile],
     ) -> Path:
         rid2sites = defaultdict(list)
         for infile in sorted(infiles, key=lambda x: x.path):
@@ -418,11 +435,18 @@ class MergeFn:
             r["site_id"]: r["dedup_id"] for r in serde.json.deser(sameas_file.path)
         }
 
+        corrections = CommodityCorrections.from_file(
+            corrections_files[0].path if len(corrections_files) > 0 else None
+        )
+
         outfile.parent.mkdir(parents=True, exist_ok=True)
         # merge the data
         lst_msi: list[MineralSiteAndInventory] = []
         for infile in sorted(infiles, key=lambda x: x.path):
             for raw_site in serde.json.deser(infile.path):
+                # before the site is normalized, so the views and the KG export
+                # both see the corrected commodity
+                corrections.apply(raw_site)
                 norm_site = MineralSiteAndInventory.from_raw_site(
                     raw_site,
                     commodity_form_conversion=self.entity_service.get_commodity_form_conversion(),
