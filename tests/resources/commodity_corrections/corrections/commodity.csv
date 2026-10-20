@@ -1,0 +1,5 @@
+source_id,observed_name,context,action,normalized_uri,note
+https://mrdata.usgs.gov/mrds,Construction,,drop,,the record also has Sand and Gravel
+http://www.oregongeology.org,SC,stone | crushed | SC,remap,https://minmod.isi.edu/resource/Q664,crushed stone
+http://www.oregongeology.org,S,sand and gravel | S | G,drop,,the record also has Sand and Gravel
+https://mrdata.usgs.gov/mrds,Metal,,remap,https://minmod.isi.edu/resource/Q628,Metal was missing from the matcher's table
