@@ -4,8 +4,8 @@ publish() batches that across a whole paper's worth of samples with per-sample e
 isolation.
 
 Deliberately Docker-free: an in-memory SQLite engine, not the Docker-Postgres fixtures
-in tests/conftest.py. Only mineral_site/sample/event_log/unit are created -- nothing
-here is Postgres-specific (no ARRAY/JSONB columns on those four tables), so this runs
+in tests/conftest.py. Only mineral_site/sample/sample_element/event_log/unit are created --
+nothing here is Postgres-specific (no ARRAY/JSONB columns on those tables), so this runs
 identically locally and in CI with no external services. dedup_mineral_site is
 imported (so MineralSite's FK to it resolves at DDL-compile time) but never created --
 its dedup columns use a Postgres-only ARRAY type that's irrelevant here, and SQLite
@@ -23,16 +23,18 @@ from unittest.mock import patch
 
 import pytest
 import minmodkg.models.kgrel.dedup_mineral_site  # noqa: F401 -- see module docstring
+from minmodkg.etl.geochem_sample_element import rebuild
 from minmodkg.models.kgrel.base import Base
 from minmodkg.models.kgrel.custom_types.location import LocationView
 from minmodkg.models.kgrel.entities.unit import Unit
 from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.mineral_site import MineralSite
 from minmodkg.models.kgrel.sample import Sample as RelSample
+from minmodkg.models.kgrel.sample_element import SampleElement
 from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.services.sample import ArgumentError, SampleService
 from minmodkg.transformations import make_sample_id
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -50,6 +52,7 @@ def engine():
         tables=[
             MineralSite.__table__,
             RelSample.__table__,
+            SampleElement.__table__,
             EventLog.__table__,
             Unit.__table__,
         ],
@@ -752,3 +755,146 @@ class TestBareUnitLabels:
         assert result["errors"] == []
         sample = service.find_by_id(sample_public_id("SM-UNIT-5"))
         assert sample.analyses[0].elements[0].grade_unit.normalized_uri == GOOD_UNIT
+
+
+def element_rows(engine, public_id: str) -> list[tuple[str, bool]]:
+    with Session(engine) as session:
+        return [
+            (r.element, r.is_bdl)
+            for r in session.query(SampleElement)
+            .join(RelSample, RelSample.id == SampleElement.sample_id)
+            .where(RelSample.public_id == public_id)
+            .order_by(SampleElement.element, SampleElement.is_bdl)
+        ]
+
+
+class TestSampleElements:
+    """sample_element is rewritten in the same transaction as every sample write."""
+
+    def create(self, service: SampleService, sample_id: str, elements: list[dict]):
+        return service.create(
+            RelSample.from_dict(
+                {
+                    "public_id": "",
+                    "mineral_site_id": SITE_ID,
+                    "sample_id": sample_id,
+                    "analyses": [{"analysis_id": "A-1", "elements": elements}],
+                    "modified_at": 0,
+                }
+            ),
+            USER,
+        )
+
+    def test_create_writes_rows(self, service: SampleService, engine):
+        created = self.create(
+            service,
+            "SM-EL-1",
+            [
+                {"label": "Ga", "grade": 1.0},
+                {"label": "Se", "grade": -0.2},
+                {"label": "In", "grade": None},
+            ],
+        )
+        assert element_rows(engine, created.public_id) == [
+            ("Ga", False),
+            ("Se", True),
+        ]
+
+    def test_patch_rewrites_rows(self, service: SampleService, engine):
+        created = self.create(service, "SM-EL-2", [{"label": "Ga", "grade": 1.0}])
+        service.patch(
+            created.public_id,
+            {
+                "analyses": [
+                    {
+                        "analysis_id": "A-1",
+                        "elements": [
+                            {"label": "Ga", "grade": -0.5},
+                            {"label": "Co", "grade": 3.0},
+                        ],
+                    }
+                ]
+            },
+            USER,
+        )
+        assert element_rows(engine, created.public_id) == [
+            ("Co", False),
+            ("Ga", True),
+        ]
+
+    def test_deleting_element_removes_its_row(self, service: SampleService, engine):
+        created = self.create(
+            service,
+            "SM-EL-3",
+            [{"label": "Ga", "grade": 1.0}, {"label": "Co", "grade": 2.0}],
+        )
+        service.patch(
+            created.public_id,
+            {
+                "analyses": [
+                    {
+                        "analysis_id": "A-1",
+                        "elements": [{"label": "Ga", "is_deleted": True}],
+                    }
+                ]
+            },
+            USER,
+        )
+        assert element_rows(engine, created.public_id) == [("Co", False)]
+
+    def test_deleting_sample_removes_rows(self, service: SampleService, engine):
+        created = self.create(service, "SM-EL-4", [{"label": "Ga", "grade": 1.0}])
+        service.patch(created.public_id, {"is_deleted": True}, USER)
+        assert element_rows(engine, created.public_id) == []
+        service.patch(created.public_id, {"is_deleted": False}, USER)
+        assert element_rows(engine, created.public_id) == [("Ga", False)]
+
+    def test_update_rewrites_rows(self, service: SampleService, engine):
+        created = self.create(service, "SM-EL-5", [{"label": "Ga", "grade": 1.0}])
+        replacement = RelSample.from_dict(
+            {
+                "public_id": created.public_id,
+                "mineral_site_id": SITE_ID,
+                "sample_id": "SM-EL-5",
+                "analyses": [
+                    {"analysis_id": "A-1", "elements": [{"label": "In", "grade": 4.0}]}
+                ],
+                "modified_at": 0,
+            }
+        ).set_id(created.id)
+        service.update(replacement, USER)
+        assert element_rows(engine, created.public_id) == [("In", False)]
+
+    def test_publish_writes_rows(self, service: SampleService, engine):
+        service.publish(
+            publish_payload(
+                {
+                    "sample_id": "SM-EL-6",
+                    "analyses": [
+                        {
+                            "analysis_id": "A-1",
+                            "elements": [{"symbol": "Se", "grade": 0.7}],
+                        }
+                    ],
+                }
+            ),
+            USER,
+        )
+        assert element_rows(engine, sample_public_id("SM-EL-6")) == [("Se", False)]
+
+    def test_rebuild_matches_write_paths(self, service: SampleService, engine):
+        for i, grade in enumerate([1.0, -0.4, None]):
+            self.create(service, f"SM-EL-R{i}", [{"label": "Ga", "grade": grade}])
+        with Session(engine) as session:
+            before = sorted(
+                (r.sample_id, r.element, r.is_bdl) for r in session.query(SampleElement)
+            )
+            session.execute(delete(SampleElement))
+            session.commit()
+        assert rebuild(engine, batch_size=2) == 3
+        with Session(engine) as session:
+            after = sorted(
+                (r.sample_id, r.element, r.is_bdl) for r in session.query(SampleElement)
+            )
+        assert after == before
+        assert len(after) == 2

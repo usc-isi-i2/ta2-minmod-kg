@@ -7,6 +7,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyCookie
 from minmodkg.config import JWT_ALGORITHM, SECRET_KEY
+from minmodkg.misc.elements import element_symbol
 from minmodkg.models.kg.base import MINMOD_KG, MINMOD_NS
 from minmodkg.models.kgrel.base import get_rel_session
 from minmodkg.models.kgrel.entities.commodity import Commodity
@@ -144,6 +145,13 @@ def norm_deposit_type(deposit_type: str) -> InternalID:
     else:
         norm_deposit_type = deposit_type
     return norm_deposit_type
+
+
+def norm_element(element: str) -> str:
+    symbol = element_symbol(element)
+    if symbol is None:
+        raise HTTPException(status_code=404, detail=f"Element `{element}` not found")
+    return symbol
 
 
 def is_minmod_id(text: str) -> bool:

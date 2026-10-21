@@ -44,6 +44,7 @@ from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.mineral_site import MineralSite, MineralSiteAndInventory
 from minmodkg.models.kgrel.paper import Paper
 from minmodkg.models.kgrel.sample import Sample
+from minmodkg.models.kgrel.sample_element import replace_sample_elements
 from minmodkg.models.kgrel.user import User
 from minmodkg.models.kgrel.views.mineral_inventory_view import (
     DedupMineralInventoryView,
@@ -195,6 +196,8 @@ def save_postgres(
         rel.modified_at = now
         samples.append(rel)
     session.add_all(samples)
+    session.flush()
+    replace_sample_elements(session, samples)
     session.commit()
     return msis, samples, list(old)
 

@@ -184,6 +184,12 @@ geochem:
 
 Apply `migrations/004_paper_registered_by.up.sql` on an existing database; it records who registered each paper. The largest papers are ~80 MB, so the proxy in front of `/api/` must allow request bodies that big (nginx `client_max_body_size`).
 
+Apply `migrations/005_sample_element.up.sql` on an existing database, then fill the table once; it indexes the elements each sample measures, for searching papers by element. Sample writes keep it current from then on, and the command is safe to rerun:
+
+```bash
+python -m minmodkg.etl.geochem_sample_element
+```
+
 The `geochem-hmi` user must exist with the `system` role for the HMI to edit these sites. The `user` command only creates `user`-role accounts, so use `add-user`, set `"role": "system"` in the resulting file, then `load-user` it.
 
 **2. Starting other services**
