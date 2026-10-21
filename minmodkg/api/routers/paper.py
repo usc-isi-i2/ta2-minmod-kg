@@ -18,6 +18,7 @@ from minmodkg.api.dependencies import (
     norm_commodity,
     norm_country,
     norm_deposit_type,
+    norm_element,
     norm_state_or_province,
 )
 from minmodkg.api.models.public_mineral_site import OutputPublicMineralSite
@@ -29,11 +30,35 @@ from minmodkg.typing import InternalID
 
 router = APIRouter(tags=["papers"])
 
+ElementQuery = Annotated[
+    Optional[str],
+    Query(
+        description="An element measured in the samples: symbol or name, e.g. Ga or Gallium."
+    ),
+]
+IncludeBdlQuery = Annotated[
+    bool,
+    Query(
+        description="Also match readings below the detection limit. Needs `element`."
+    ),
+]
+
 
 def paper_dict(paper: Paper) -> dict:
     d = paper.to_dict()
     d.pop("file", None)
     return d
+
+
+def norm_element_filter(element: Optional[str], include_bdl: bool) -> Optional[str]:
+    if element is None:
+        if include_bdl:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="include_bdl needs element",
+            )
+        return None
+    return norm_element(element)
 
 
 def get_paper_or_404(paper_service: PaperService, paper_id: str) -> Paper:
@@ -50,6 +75,8 @@ def get_paper_or_404(paper_service: PaperService, paper_id: str) -> Paper:
 def list_papers(
     paper_service: PaperServiceDep,
     commodity: Optional[str] = None,
+    element: ElementQuery = None,
+    include_bdl: IncludeBdlQuery = False,
     deposit_type: Optional[str] = None,
     country: Optional[str] = None,
     state_or_province: Optional[str] = None,
@@ -63,6 +90,8 @@ def list_papers(
     matching sites. Entity filters take a name or a MinMod id."""
     results, total = paper_service.find_papers(
         commodity=norm_commodity(commodity) if commodity is not None else None,
+        element=norm_element_filter(element, include_bdl),
+        include_bdl=include_bdl,
         deposit_type=(
             norm_deposit_type(deposit_type) if deposit_type is not None else None
         ),
@@ -140,7 +169,13 @@ def register_paper(
 
 
 @router.get("/papers/{paper_id}")
-def get_paper(paper_id: str, paper_service: PaperServiceDep):
+def get_paper(
+    paper_id: str,
+    paper_service: PaperServiceDep,
+    element: ElementQuery = None,
+    include_bdl: IncludeBdlQuery = False,
+):
+    element = norm_element_filter(element, include_bdl)
     paper = get_paper_or_404(paper_service, paper_id)
     return {
         **paper_dict(paper),
@@ -149,7 +184,7 @@ def get_paper(paper_id: str, paper_service: PaperServiceDep):
                 **OutputPublicMineralSite.from_kgrel(site).to_dict(),
                 "sample_count": count,
             }
-            for site, count in paper_service.get_sites(paper)
+            for site, count in paper_service.get_sites(paper, element, include_bdl)
         ],
     }
 
@@ -159,12 +194,20 @@ def get_paper_samples(
     paper_id: str,
     paper_service: PaperServiceDep,
     site_id: Optional[InternalID] = None,
+    element: ElementQuery = None,
+    include_bdl: IncludeBdlQuery = False,
     limit: Annotated[int, Query(ge=0)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
+    element = norm_element_filter(element, include_bdl)
     paper = get_paper_or_404(paper_service, paper_id)
     samples, total = paper_service.find_samples(
-        paper, site_id=site_id, limit=limit, offset=offset
+        paper,
+        site_id=site_id,
+        element=element,
+        include_bdl=include_bdl,
+        limit=limit,
+        offset=offset,
     )
     return {
         "total": total,

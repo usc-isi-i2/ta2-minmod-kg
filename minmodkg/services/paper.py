@@ -24,6 +24,7 @@ from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.mineral_site import MineralSite, MineralSiteAndInventory
 from minmodkg.models.kgrel.paper import Paper
 from minmodkg.models.kgrel.sample import Sample
+from minmodkg.models.kgrel.sample_element import SampleElement
 from minmodkg.models.kgrel.views.mineral_inventory_view import MineralInventoryView
 from minmodkg.services.mineral_site import MineralSiteService
 from minmodkg.services.sync.geochem_listener import GeoChemJournal
@@ -61,9 +62,19 @@ class PaperService:
             MineralSite.created_by == USER_URI
         )
 
+    def element_filter(self, element: str, include_bdl: bool, *where):
+        """A sample_element row exists for `element`, detected or, with
+        `include_bdl`, below detection."""
+        cond = [SampleElement.element == element, *where]
+        if not include_bdl:
+            cond.append(SampleElement.is_bdl.is_(False))
+        return exists().where(*cond)
+
     def find_papers(
         self,
         commodity: Optional[InternalID] = None,
+        element: Optional[str] = None,
+        include_bdl: bool = False,
         deposit_type: Optional[InternalID] = None,
         country: Optional[InternalID] = None,
         state_or_province: Optional[InternalID] = None,
@@ -83,6 +94,12 @@ class PaperService:
                 exists().where(
                     MineralInventoryView.site_id == MineralSite.id,
                     MineralInventoryView.commodity == commodity,
+                )
+            )
+        if element is not None:
+            query = query.where(
+                self.element_filter(
+                    element, include_bdl, SampleElement.site_id == MineralSite.site_id
                 )
             )
         if any(x is not None for x in (deposit_type, country, state_or_province)):
@@ -132,18 +149,28 @@ class PaperService:
         with Session(self.engine, expire_on_commit=False) as session:
             return session.get(Paper, paper_id)
 
-    def get_sites(self, paper: Paper) -> list[tuple[MineralSiteAndInventory, int]]:
-        """The paper's sites, each with its number of samples."""
+    def get_sites(
+        self,
+        paper: Paper,
+        element: Optional[str] = None,
+        include_bdl: bool = False,
+    ) -> list[tuple[MineralSiteAndInventory, int]]:
+        """The paper's sites, each with its number of samples; with `element`,
+        only sites with a sample measuring it."""
         service = MineralSiteService(self.engine)
+        query = service._select_mineral_site().where(
+            MineralSite.source_id == paper.source_id,
+            MineralSite.created_by == USER_URI,
+        )
+        if element is not None:
+            query = query.where(
+                self.element_filter(
+                    element, include_bdl, SampleElement.site_id == MineralSite.site_id
+                )
+            )
         with Session(self.engine, expire_on_commit=False) as session:
             sites = service._read_mineral_sites(
-                session,
-                service._select_mineral_site()
-                .where(
-                    MineralSite.source_id == paper.source_id,
-                    MineralSite.created_by == USER_URI,
-                )
-                .order_by(MineralSite.site_id),
+                session, query.order_by(MineralSite.site_id)
             )
             counts = dict(
                 session.execute(
@@ -158,6 +185,8 @@ class PaperService:
         self,
         paper: Paper,
         site_id: Optional[InternalID] = None,
+        element: Optional[str] = None,
+        include_bdl: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[Sample], int]:
@@ -172,6 +201,12 @@ class PaperService:
         )
         if site_id is not None:
             query = query.where(Sample.mineral_site_id == site_id)
+        if element is not None:
+            query = query.where(
+                self.element_filter(
+                    element, include_bdl, SampleElement.sample_id == Sample.id
+                )
+            )
         with Session(self.engine, expire_on_commit=False) as session:
             total = session.execute(
                 select(func.count()).select_from(query.subquery())

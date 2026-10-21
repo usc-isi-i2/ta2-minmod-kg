@@ -14,6 +14,7 @@ from minmodkg.models.kgrel.base import engine
 from minmodkg.models.kgrel.custom_types import Location
 from minmodkg.models.kgrel.event import EventLog
 from minmodkg.models.kgrel.sample import Sample
+from minmodkg.models.kgrel.sample_element import replace_sample_elements
 from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.transformations import make_sample_id
 from minmodkg.typing import InternalID
@@ -199,6 +200,8 @@ class SampleService:
 
         with Session(self.engine, expire_on_commit=False) as session:
             session.add(sample)
+            session.flush()
+            replace_sample_elements(session, [sample])
             session.add(EventLog.from_sample_add(sample))
             session.commit()
             session.refresh(sample)
@@ -249,6 +252,7 @@ class SampleService:
             sample.modified_at = time.time_ns()
 
             session.execute(sample.get_update_query())
+            replace_sample_elements(session, [sample])
             session.add(EventLog.from_sample_update(sample))
             session.commit()
         return sample
@@ -413,6 +417,7 @@ class SampleService:
                     raise SHACLValidationError(messages)
 
             session.execute(existing.get_update_query())
+            replace_sample_elements(session, [existing])
             session.add(EventLog.from_sample_update(existing))
             session.commit()
         return existing
