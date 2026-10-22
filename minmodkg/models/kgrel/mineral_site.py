@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Iterable, Optional
 
 from minmodkg.grade_tonnage_model import GradeTonnageModel
+from minmodkg.misc.state_repair import StateCountryIndex
 from minmodkg.misc.utils import datetime_to_nanoseconds, format_nanoseconds, makedict
 from minmodkg.models.kg.base import NS_MR
 from minmodkg.models.kg.candidate_entity import CandidateEntity
@@ -57,8 +58,9 @@ class MineralSiteAndInventory:
         crs_names: dict[str, str],
         source_score: dict[IRI, float | None],
         dedup_site_id: Optional[str] = None,
+        state_index: Optional[StateCountryIndex] = None,
     ) -> MineralSiteAndInventory:
-        ms = MineralSite.from_raw_site(raw_site, crs_names, source_score)
+        ms = MineralSite.from_raw_site(raw_site, crs_names, source_score, state_index)
         if dedup_site_id is not None:
             ms.dedup_site_id = dedup_site_id
 
@@ -207,6 +209,7 @@ class MineralSite(MappedAsDataclass, Base):
         raw_site: dict | KGMineralSite,
         crs_names: dict[str, str],
         source_score: dict[IRI, float | None],
+        state_index: Optional[StateCountryIndex] = None,
     ) -> MineralSite:
         site = (
             KGMineralSite.from_dict(raw_site)
@@ -223,7 +226,7 @@ class MineralSite(MappedAsDataclass, Base):
                 crs=site.location_info.crs,
                 coordinates=site.location_info.location,
             )
-            location_view = LocationView.from_location(location, crs_names)
+            location_view = LocationView.from_location(location, crs_names, state_index)
 
         out_site = MineralSite(
             site_id=site.id,

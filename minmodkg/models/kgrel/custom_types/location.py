@@ -5,6 +5,7 @@ from typing import Annotated, Optional
 
 import shapely.wkt
 from minmodkg.misc.geo import reproject_geometry
+from minmodkg.misc.state_repair import StateCountryIndex
 from minmodkg.misc.utils import extend_unique, makedict
 from minmodkg.models.kg.base import NS_MR
 from minmodkg.models.kg.candidate_entity import CandidateEntity
@@ -113,8 +114,13 @@ class LocationView(GeoCoordinate):
         return self
 
     @staticmethod
-    def from_location(location: Location, crss: dict[str, str]) -> LocationView:
+    def from_location(
+        location: Location,
+        crss: dict[str, str],
+        state_index: Optional[StateCountryIndex] = None,
+    ) -> LocationView:
         view = LocationView()
+        crs = None
         if location.coordinates is not None:
             if location.crs is None or location.crs.normalized_uri is None:
                 crs = "EPSG:4326"
@@ -147,4 +153,41 @@ class LocationView(GeoCoordinate):
             for ent in location.state_or_province
             if ent.normalized_uri is not None
         ]
+        if state_index is not None and len(view.country) > 0:
+            # A state that sits in none of the recorded countries is re-resolved
+            # inside them, or dropped. Only the view changes: `location` is what
+            # goes to the KG, and keeps the source's observed_name for curators.
+            # A dropped state that names a listed dependency of a recorded
+            # country ("Greenland" under Denmark) moves the record to that
+            # dependency's country instead; all decided against the recorded
+            # countries, then applied. A dropped "Katanga" in DR Congo takes
+            # the successor province that contains the record's point.
+            states = []
+            moves = {}
+            for ent in location.state_or_province:
+                if ent.normalized_uri is None:
+                    continue
+                state_id = NS_MR.id(ent.normalized_uri)
+                _, state = state_index.repair(state_id, ent.observed_name, view.country)
+                if state is not None:
+                    states.append(state)
+                    continue
+                move = state_index.dependency(state_id, ent.observed_name, view.country)
+                if move is not None:
+                    moves[move[0]] = move[1]
+                    continue
+                state = state_index.katanga(
+                    state_id,
+                    ent.observed_name,
+                    view.country,
+                    location.coordinates,
+                    crs,
+                )
+                if state is not None and state not in states:
+                    states.append(state)
+            view.state_or_province = states
+            if moves:
+                view.country = list(
+                    dict.fromkeys(moves.get(c, c) for c in view.country)
+                )
         return view
