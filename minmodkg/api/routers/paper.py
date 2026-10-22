@@ -16,7 +16,7 @@ from minmodkg.api.dependencies import (
     CurrentUserDep,
     PaperServiceDep,
     norm_commodity,
-    norm_country,
+    norm_country_or_alias,
     norm_deposit_type,
     norm_element,
     norm_state_or_province,
@@ -87,7 +87,8 @@ def list_papers(
     return_count: Annotated[bool, Query()] = False,
 ):
     """Search papers: those with a site matching every filter, each with its
-    matching sites. Entity filters take a name or a MinMod id."""
+    matching sites. Entity filters take a name or a MinMod id; country also
+    an ISO alpha-2/alpha-3 code."""
     results, total = paper_service.find_papers(
         commodity=norm_commodity(commodity) if commodity is not None else None,
         element=norm_element_filter(element, include_bdl),
@@ -95,7 +96,7 @@ def list_papers(
         deposit_type=(
             norm_deposit_type(deposit_type) if deposit_type is not None else None
         ),
-        country=norm_country(country) if country is not None else None,
+        country=norm_country_or_alias(country) if country is not None else None,
         state_or_province=(
             norm_state_or_province(state_or_province)
             if state_or_province is not None
