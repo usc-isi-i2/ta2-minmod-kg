@@ -15,6 +15,7 @@ from minmodkg.models.kgrel.entities.country import Country
 from minmodkg.models.kgrel.entities.deposit_type import DepositType
 from minmodkg.models.kgrel.entities.state_or_province import StateOrProvince
 from minmodkg.models.kgrel.user import User
+from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.services.mineral_site import MineralSiteService
 from minmodkg.services.paper import PaperService
 from minmodkg.services.sample import SampleService
@@ -111,6 +112,16 @@ def norm_country(country: str) -> InternalID:
     return norm_country
 
 
+def norm_country_or_alias(country: str) -> InternalID:
+    """norm_country that also takes an alias: an ISO alpha-2/alpha-3 code
+    (CN, CHN) or an alternative name, any case."""
+    if not country.startswith("http") and not is_minmod_id(country):
+        country_id = get_country_by_name(country) or get_country_by_alias(country)
+        if country_id is not None:
+            return country_id
+    return norm_country(country)
+
+
 def norm_state_or_province(state_or_province: str) -> InternalID:
     if state_or_province.startswith("http"):
         raise HTTPException(
@@ -176,6 +187,17 @@ def get_country_by_name(
             select(Country.id).where(func.lower(Country.name) == name.lower())
         )
         return country_id
+
+
+def get_country_by_alias(alias: str) -> Optional[InternalID]:
+    alias = alias.strip().lower()
+    if not alias:
+        # most countries carry an empty alias (no alternative names)
+        return None
+    for country in EntityService.get_instance().get_countries():
+        if any(a.lower() == alias for a in country.aliases):
+            return country.id
+    return None
 
 
 def get_state_or_province_by_name(

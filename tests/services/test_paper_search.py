@@ -1,4 +1,4 @@
-"""Searching GeoChem papers by measured element. Docker-free, on in-memory
+"""Searching GeoChem papers by measured element and by country code. Docker-free, on in-memory
 SQLite like test_sample; get_sites aggregates with Postgres-only jsonb_agg,
 so GET /papers/{paper_id} is not covered here."""
 
@@ -8,10 +8,14 @@ import minmodkg.models.kgrel.dedup_mineral_site  # noqa: F401 -- see test_sample
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from minmodkg.api.dependencies import get_paper_service
+from contextlib import contextmanager
+
+from minmodkg.api.dependencies import get_paper_service, norm_country_or_alias
 from minmodkg.api.routers import paper as paper_router
 from minmodkg.etl.geochem_jsonld import USER_URI
+from fastapi import HTTPException
 from minmodkg.models.kgrel.base import Base
+from minmodkg.models.kgrel.entities.country import Country
 from minmodkg.models.kgrel.custom_types.location import LocationView
 from minmodkg.models.kgrel.mineral_site import MineralSite
 from minmodkg.models.kgrel.paper import Paper
@@ -21,6 +25,7 @@ from minmodkg.models.kgrel.sample_element import (
     replace_sample_elements,
 )
 from minmodkg.models.kgrel.views.mineral_inventory_view import MineralInventoryView
+from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.services.paper import PaperService
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -228,3 +233,49 @@ class TestSamples:
     def test_unknown_element(self, client: TestClient):
         resp = client.get("/papers/2004_Ono_etal/samples", params={"element": "Xx"})
         assert resp.status_code == 404
+
+
+class TestCountry:
+    @pytest.fixture(autouse=True)
+    def countries(self, monkeypatch):
+        eng = create_engine("sqlite://", poolclass=StaticPool)
+        Base.metadata.create_all(eng, tables=[Country.__table__])
+        with Session(eng) as session:
+            session.add_all(
+                [
+                    Country(id="Q1044", name="China", aliases=["", "CHN", "CN"]),
+                    Country(id="Q1167", name="Myanmar", aliases=["Burma", "MMR", "MM"]),
+                ]
+            )
+            session.commit()
+
+        @contextmanager
+        def rel_session():
+            with Session(eng) as session:
+                yield session
+
+        monkeypatch.setattr("minmodkg.api.dependencies.get_rel_session", rel_session)
+        monkeypatch.setattr(EntityService, "instance", EntityService(eng))
+
+    @pytest.mark.parametrize(
+        "value,country_id",
+        [
+            ("China", "Q1044"),
+            ("china", "Q1044"),
+            ("CN", "Q1044"),
+            ("cn", "Q1044"),
+            ("CHN", "Q1044"),
+            ("Q1044", "Q1044"),
+            ("Burma", "Q1167"),
+            ("MM", "Q1167"),
+        ],
+    )
+    def test_name_id_or_code(self, value, country_id):
+        assert norm_country_or_alias(value) == country_id
+
+    @pytest.mark.parametrize("value", ["Atlantis", "XX", "C", "", " "])
+    def test_unknown(self, value):
+        with pytest.raises(HTTPException) as e:
+            norm_country_or_alias(value)
+        assert e.value.status_code == 404
+        assert e.value.detail == f"country `{value}` not found"
