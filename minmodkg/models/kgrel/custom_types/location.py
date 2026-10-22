@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Annotated, Optional
+from typing import Annotated, Mapping, Optional
 
 import shapely.wkt
 from minmodkg.misc.geo import reproject_geometry
@@ -10,6 +10,8 @@ from minmodkg.models.kg.base import NS_MR
 from minmodkg.models.kg.candidate_entity import CandidateEntity
 from minmodkg.models.kg.location_info import LocationInfo
 from minmodkg.typing import InternalID
+from shapely.geometry import MultiPoint, Point
+from shapely.geometry.base import BaseGeometry
 
 
 @dataclass
@@ -50,6 +52,12 @@ class Location:
             crs=self.crs,
             location=self.coordinates,
         )
+
+    def crs_name(self, crss: Mapping[str, str]) -> str:
+        """The coordinates' CRS as "EPSG:<code>"; none given means EPSG:4326."""
+        if self.crs is None or self.crs.normalized_uri is None:
+            return "EPSG:4326"
+        return crss[self.crs.normalized_uri]
 
 
 @dataclass
@@ -116,10 +124,7 @@ class LocationView(GeoCoordinate):
     def from_location(location: Location, crss: dict[str, str]) -> LocationView:
         view = LocationView()
         if location.coordinates is not None:
-            if location.crs is None or location.crs.normalized_uri is None:
-                crs = "EPSG:4326"
-            else:
-                crs = crss[location.crs.normalized_uri]
+            crs = location.crs_name(crss)
 
             # TODO: fix this nan
             if "nan" in location.coordinates.lower():
@@ -127,9 +132,12 @@ class LocationView(GeoCoordinate):
             else:
                 try:
                     assert crs.startswith("EPSG:")
-                    geometry = shapely.wkt.loads(location.coordinates)
-                    centroid = shapely.centroid(geometry)
-                    centroid = reproject_geometry(centroid, crs, "EPSG:4326")
+                    geometry = drop_null_island(shapely.wkt.loads(location.coordinates))
+                    if geometry is None:
+                        centroid = None
+                    else:
+                        centroid = shapely.centroid(geometry)
+                        centroid = reproject_geometry(centroid, crs, "EPSG:4326")
                 except shapely.errors.GEOSException:
                     centroid = None
 
@@ -148,3 +156,23 @@ class LocationView(GeoCoordinate):
             if ent.normalized_uri is not None
         ]
         return view
+
+
+def drop_null_island(geometry: BaseGeometry) -> Optional[BaseGeometry]:
+    """Remove points at exactly (0, 0), as written in the source's own CRS.
+
+    Extractors write (0, 0) when a document gives no coordinate, so it is a
+    missing value, not a place. A point there becomes None; a multipoint keeps
+    its other points, or becomes None if none are left. Anything else is
+    returned unchanged.
+    """
+    if geometry.is_empty:
+        return geometry
+    if isinstance(geometry, Point):
+        return None if geometry.x == 0 and geometry.y == 0 else geometry
+    if isinstance(geometry, MultiPoint):
+        kept = [p for p in geometry.geoms if not (p.x == 0 and p.y == 0)]
+        if len(kept) == len(geometry.geoms):
+            return geometry
+        return MultiPoint(kept) if kept else None
+    return geometry
