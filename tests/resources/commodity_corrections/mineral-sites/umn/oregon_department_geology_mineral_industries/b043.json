@@ -1,0 +1,75 @@
+[
+  {
+    "source_id": "http://www.oregongeology.org",
+    "record_id": "ID_04514",
+    "name": "Last Chance Sulfur Mine",
+    "location_info": {
+      "country": [
+        {
+          "source": "UMN Matching System v1",
+          "confidence": 1.0,
+          "observed_name": "United States",
+          "normalized_uri": "https://minmod.isi.edu/resource/Q1235"
+        }
+      ],
+      "state_or_province": [
+        {
+          "source": "UMN Matching System v1",
+          "confidence": 1.0,
+          "observed_name": "Oregon",
+          "normalized_uri": "https://minmod.isi.edu/resource/Q6886"
+        }
+      ],
+      "crs": {
+        "source": "UMN Matching System v1",
+        "confidence": 1.0,
+        "observed_name": "EPSG:2994",
+        "normalized_uri": "https://minmod.isi.edu/resource/Q705"
+      },
+      "location": "POINT (794182.4150262475 487070.9055118114)"
+    },
+    "deposit_type_candidate": [
+      {
+        "source": "UMN Matching System v1",
+        "confidence": 0.001,
+        "observed_name": "vein"
+      }
+    ],
+    "mineral_inventory": [
+      {
+        "reference": {
+          "document": {
+            "uri": "http://www.oregongeology.org"
+          }
+        },
+        "commodity": {
+          "source": "UMN Matching System v1",
+          "confidence": 0.001,
+          "observed_name": "sulfur and pyrite"
+        }
+      },
+      {
+        "reference": {
+          "document": {
+            "uri": "http://www.oregongeology.org"
+          }
+        },
+        "commodity": {
+          "source": "UMN Matching System v1",
+          "confidence": 1.0,
+          "observed_name": "S",
+          "normalized_uri": "https://minmod.isi.edu/resource/Q633"
+        }
+      }
+    ],
+    "reference": [
+      {
+        "document": {
+          "uri": "http://www.oregongeology.org"
+        }
+      }
+    ],
+    "created_by": "https://minmod.isi.edu/users/s/umn",
+    "modified_at": "2024-10-26T16:30:23Z"
+  }
+]
