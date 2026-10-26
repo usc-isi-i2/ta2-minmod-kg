@@ -178,7 +178,8 @@ class LocationView(GeoCoordinate):
                 state_id = NS_MR.id(ent.normalized_uri)
                 _, state = state_index.repair(state_id, ent.observed_name, view.country)
                 if state is not None:
-                    states.append(state)
+                    if state not in states:
+                        states.append(state)
                     continue
                 move = state_index.dependency(state_id, ent.observed_name, view.country)
                 if move is not None:

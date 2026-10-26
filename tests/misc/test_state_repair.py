@@ -375,6 +375,36 @@ def test_location_view_moves_the_country():
     assert LocationView.from_location(location, {}, None).country == ["Q1075", "Q1047"]
 
 
+def test_location_view_repoints_without_duplicates():
+    from minmodkg.models.kg.base import NS_MR
+    from minmodkg.models.kg.candidate_entity import CandidateEntity
+    from minmodkg.models.kgrel.custom_types.location import Location, LocationView
+
+    idx = StateCountryIndex.build(_states(ENTITY_DIR))
+
+    def cand(id, name=None):
+        return CandidateEntity(
+            source="test",
+            confidence=1.0,
+            observed_name=name,
+            normalized_uri=NS_MR.uristr(id),
+        )
+
+    # a US record: Florida (Puerto Rico), Florida (Uruguay) and Florida
+    # (United States) all end up as Florida (United States), once
+    for states in [
+        ["Q5307", "Q5307"],
+        ["Q5307", "Q6920"],
+        ["Q6850", "Q5307"],
+    ]:
+        location = Location(
+            country=[cand("Q1235")],
+            state_or_province=[cand(s, "Florida") for s in states],
+        )
+        view = LocationView.from_location(location, {}, idx)
+        assert view.state_or_province == ["Q6850"], states
+
+
 @pytest.mark.parametrize(
     "picked, observed, dependency",
     [
