@@ -127,7 +127,7 @@ mkdir -p "$OUT"
 echo "=== $MODE  ($(date -u '+%Y-%m-%dT%H:%M:%SZ')) ==="
 
 # 1. Environment. The merge-cache filename is the single most diagnostic fact
-#    here: if "after" does not list merge-v108, the merge was skipped and the
+#    here: if "after" does not list merge-v111, the merge was skipped and the
 #    numbers below cannot have changed.
 {
   echo "timestamp_utc      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
