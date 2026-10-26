@@ -385,7 +385,9 @@ def test_location_view_moves_the_country():
         ("Q6239", "Cayman Islands", "Q1040"),
     ],
 )
-def test_location_view_moves_uk_records_to_their_territory(picked, observed, dependency):
+def test_location_view_moves_uk_records_to_their_territory(
+    picked, observed, dependency
+):
     from minmodkg.models.kg.base import NS_MR
     from minmodkg.models.kg.candidate_entity import CandidateEntity
     from minmodkg.models.kgrel.custom_types.location import Location, LocationView
@@ -507,4 +509,6 @@ def test_katanga_never_changes_what_a_tier_resolves():
     idx = StateCountryIndex.build(_states(ENTITY_DIR), {"Q3012": ["Katanga"]})
     view = katanga_view(IN_PROVINCE["Q3000"], idx=idx)
     assert view.state_or_province == ["Q3012"]
-    assert idx.katanga(TANGA, "Katanga", [DRC], IN_PROVINCE["Q3000"], "EPSG:4326") is None
+    assert (
+        idx.katanga(TANGA, "Katanga", [DRC], IN_PROVINCE["Q3000"], "EPSG:4326") is None
+    )
