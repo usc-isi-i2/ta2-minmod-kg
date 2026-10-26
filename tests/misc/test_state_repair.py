@@ -581,3 +581,87 @@ def test_katanga_never_changes_what_a_tier_resolves():
     assert (
         idx.katanga(TANGA, "Katanga", [DRC], IN_PROVINCE["Q3000"], "EPSG:4326") is None
     )
+
+
+# The merged country and state: the country of the highest-ranked record that
+# has one, and a state only from a record in that country.
+
+SYSTEM = "https://minmod.isi.edu/users/s/test"
+CURATOR = "https://minmod.isi.edu/users/u/curator"
+US, MX, FL, SON = "Q1235", "Q1140", "Q6850", "Q4555"
+
+
+def located(record_id, countries, states=(), score=0.5, created_by=SYSTEM):
+    from minmodkg.models.kgrel.mineral_site import MineralSiteAndInventory
+
+    return MineralSiteAndInventory.from_dict(
+        {
+            "ms": {
+                "site_id": f"site__{record_id}",
+                "dedup_site_id": "dedup_site__test",
+                "source_id": "https://example.org/source",
+                "source_score": score,
+                "record_id": record_id,
+                "location_view": {
+                    "country": list(countries),
+                    "state_or_province": list(states),
+                },
+                "created_by": created_by,
+                "modified_at": 1,
+            }
+        }
+    )
+
+
+def merged(*sites):
+    from minmodkg.models.kgrel.dedup_mineral_site import DedupMineralSite
+
+    dms = DedupMineralSite.from_sites(list(sites)).dms
+    return (dms.country.value, dms.country.refid), (
+        dms.state_or_province.value,
+        dms.state_or_province.refid,
+    )
+
+
+def merged_in_two_parts(*parts):
+    """Each part merged on its own, then the parts merged, as the ETL does when
+    a site's records sit in different buckets."""
+    from minmodkg.models.kgrel.dedup_mineral_site import DedupMineralSite
+
+    dms = DedupMineralSite.from_dedup_sites(
+        [DedupMineralSite.from_sites(list(part)).dms for part in parts],
+        [site for part in parts for site in part],
+        is_site_ranked=True,
+    ).dms
+    return (dms.country.value, dms.country.refid), (
+        dms.state_or_province.value,
+        dms.state_or_province.refid,
+    )
+
+
+def test_a_curators_country_beats_a_lower_records_country_and_state():
+    curator = located("cur", [MX], created_by=CURATOR)
+    source = located("src", [US], [FL], score=0.9)
+    expected = (([MX], "site__cur"), ([], "site__cur"))
+    assert merged(curator, source) == expected
+    assert merged_in_two_parts([curator], [source]) == expected
+
+
+def test_the_state_comes_from_a_record_in_the_merged_country():
+    curator = located("cur", [MX], created_by=CURATOR)
+    other_country = located("us", [US], [FL], score=0.9)
+    same_country = located("mx", [MX], [SON], score=0.5)
+    sites = (curator, other_country, same_country)
+    expected = (([MX], "site__cur"), ([SON], "site__mx"))
+    assert merged(*sites) == expected
+    assert merged_in_two_parts([curator], [other_country], [same_country]) == expected
+    assert merged_in_two_parts([curator, other_country], [same_country]) == expected
+
+
+def test_a_state_without_a_country_is_not_paired_with_one():
+    # the top record has a state only; the country's own record gives the state
+    no_country = located("a", [], [FL], score=0.9)
+    with_country = located("b", [MX], [SON], score=0.5)
+    assert merged(no_country, with_country) == (([MX], "site__b"), ([SON], "site__b"))
+    # with no country anywhere, the top state is kept as before
+    assert merged(no_country, located("c", [], [SON]))[1] == ([FL], "site__a")
