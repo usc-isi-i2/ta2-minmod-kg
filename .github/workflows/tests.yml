@@ -51,4 +51,5 @@ jobs:
             tests/etl/test_geochem_jsonld.py \
             tests/services/test_paper_jsonld.py \
             tests/misc/test_commodity_corrections.py \
+            tests/misc/test_state_repair.py \
             -v --no-cov
