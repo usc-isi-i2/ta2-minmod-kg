@@ -10,7 +10,7 @@
 -- ta2-minmod-data 0c8b827. Newer data can drift a little; the 0 rows should
 -- stay 0 and the "unchanged" rows should equal the before run.
 --
--- If the statickg workdir's merge cache is not merge-v108 (or later)
+-- If the statickg workdir's merge cache is not merge-v110 (or later)
 -- (services/mineralsiteetl/merge-v*.sqlite), the merge did not re-run and
 -- nothing here will have changed. With #110 (state repair) in the same build,
 -- "merged sites with a state" also drops by 221; no other row depends on it.
