@@ -257,7 +257,8 @@ def merge_inputs(tmp_path_factory) -> dict:
     root = tmp_path_factory.mktemp("merge")
     entity_dir = root / "entities"
     entity_dir.mkdir()
-    for name in ("commodity_form", "crs", "data_source"):
+    # state_or_province: the merge-time state repair reads it
+    for name in ("commodity_form", "crs", "data_source", "state_or_province"):
         records = EntityDeserFn.read_file(RESOURCE_DIR / f"kgdata/entities/{name}.csv")
         serde.json.ser(
             {records[0].__class__.__name__: [r.to_dict() for r in records]},
