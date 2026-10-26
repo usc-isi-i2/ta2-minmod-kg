@@ -13,7 +13,7 @@
 -- If the statickg workdir's merge cache is not merge-v110 (or later)
 -- (services/mineralsiteetl/merge-v*.sqlite), the merge did not re-run and
 -- nothing here will have changed. With #110 (state repair) in the same build,
--- "merged sites with a state" also drops by 221; no other row depends on it.
+-- "merged sites with a state" also drops by 228; no other row depends on it.
 --
 -- SQL, not SPARQL: lat/lon exist only in Postgres
 -- (mineral_site.location_view, dedup_mineral_site.coordinates, bytea holding
@@ -408,7 +408,7 @@ metrics (sort, metric, value, expected) AS (
             SELECT count(*) FROM dedup_mineral_site
             WHERE cardinality(state_or_province_val) > 0
         ),
-        'unchanged (374,202); 221 lower if #110 is in the same build'
+        'unchanged (374,202); 228 lower if #110 is in the same build'
 
     UNION ALL
 
