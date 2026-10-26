@@ -294,6 +294,7 @@ def merge_inputs(tmp_path_factory) -> dict:
         "entity_dir": entity_dir,
         "infiles": [infile(root / relpath)],
         "sameas_file": infile(sameas),
+        "state_or_province_file": infile(entity_dir / "state_or_province.json"),
         "empty": infile(empty),
         "list": infile(listfile),
     }
@@ -307,6 +308,7 @@ def merge(inputs: dict, name: str, corrections_files: list[InputFile]) -> Path:
         sameas_file=inputs["sameas_file"],
         outfile=inputs["root"] / f"out-{name}.json",
         corrections_files=corrections_files,
+        state_or_province_file=inputs["state_or_province_file"],
     )
 
 

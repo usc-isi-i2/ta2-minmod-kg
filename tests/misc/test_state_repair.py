@@ -218,6 +218,45 @@ def test_entity_json_is_unchanged_without_alt_names(tmp_path: Path):
     assert b"aliases" not in outputs[0]
 
 
+def test_merge_cache_is_keyed_on_the_state_file(tmp_path: Path):
+    """A new alias in state_or_province.json re-runs a cached merge."""
+    from minmodkg.etl.mineral_site import MergeFn
+
+    entity_dir = tmp_path / "entities"
+    entity_dir.mkdir()
+    state_file = entity_dir / "state_or_province.json"
+    sameas = tmp_path / "sameas.json"
+    sameas.write_text("[]")
+    (tmp_path / "work").mkdir()
+    fn = MergeFn(tmp_path / "work", entity_dir)
+    outfile = tmp_path / "out.json"
+
+    def infile(path: Path) -> InputFile:
+        return InputFile.from_relpath(
+            RelPath(BaseType.REPO, tmp_path, str(path.relative_to(tmp_path)))
+        )
+
+    def merge_ran() -> bool:
+        # a missing output re-runs the merge, so leave a marker instead
+        outfile.write_text("not merged")
+        fn.invoke(
+            infiles=[],
+            sameas_file=infile(sameas),
+            outfile=outfile,
+            corrections_files=[],
+            state_or_province_file=infile(state_file),
+        )
+        return outfile.read_text() != "not merged"
+
+    state_file.write_text('{"StateOrProvince": [{"id": "odisha"}]}')
+    assert merge_ran()
+    assert not merge_ran()
+    state_file.write_text(
+        '{"StateOrProvince": [{"id": "odisha", "aliases": ["Orissa"]}]}'
+    )
+    assert merge_ran()
+
+
 # The checks below run on an entity directory: this repo's copy by default, or
 # a ta2-minmod-data checkout with MINMOD_ENTITY_DIR=<checkout>/data/entities.
 DATA_ENTITY_DIR = Path(os.environ.get("MINMOD_ENTITY_DIR", ENTITY_DIR))
