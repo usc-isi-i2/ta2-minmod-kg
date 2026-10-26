@@ -47,4 +47,5 @@ jobs:
             tests/libraries/rdf/test_rdf_model.py \
             tests/etl/test_geochem_jsonld.py \
             tests/services/test_paper_jsonld.py \
+            tests/misc/test_commodity_corrections.py \
             -v --no-cov

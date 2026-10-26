@@ -1,0 +1,11 @@
+minmod_id,name,parent,aliases,geokb_name,geokb_id,is_critical_commodity,mrds_code
+Q581,Nonmetal,,,nonmetal,Q480,0,_N
+Q607,Scandium,,Sc,scandium,Q377,1,SC
+Q609,Strontium,,Sr,strontium,Q383,1,SR
+Q628,Metal,,,metal,Q473,0,_M
+Q633,Sulfur,,S,sulfur,Q384,1,S
+Q655,Sand,,,,,0,SD
+Q656,Sand and Gravel,Q655,,,,0,SDG
+Q663,Stone,,,,,0,STN
+Q664,Stone > Crushed/Broken,Q663,,,,0,STN_C
+Q665,Stone > Dimension,Q663,,,,0,STN_D
