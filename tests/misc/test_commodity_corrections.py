@@ -257,7 +257,8 @@ def merge_inputs(tmp_path_factory) -> dict:
     root = tmp_path_factory.mktemp("merge")
     entity_dir = root / "entities"
     entity_dir.mkdir()
-    for name in ("commodity_form", "crs", "data_source"):
+    # state_or_province: the merge-time state repair reads it
+    for name in ("commodity_form", "crs", "data_source", "state_or_province"):
         records = EntityDeserFn.read_file(RESOURCE_DIR / f"kgdata/entities/{name}.csv")
         serde.json.ser(
             {records[0].__class__.__name__: [r.to_dict() for r in records]},
@@ -293,6 +294,7 @@ def merge_inputs(tmp_path_factory) -> dict:
         "entity_dir": entity_dir,
         "infiles": [infile(root / relpath)],
         "sameas_file": infile(sameas),
+        "state_or_province_file": infile(entity_dir / "state_or_province.json"),
         "empty": infile(empty),
         "list": infile(listfile),
     }
@@ -306,6 +308,7 @@ def merge(inputs: dict, name: str, corrections_files: list[InputFile]) -> Path:
         sameas_file=inputs["sameas_file"],
         outfile=inputs["root"] / f"out-{name}.json",
         corrections_files=corrections_files,
+        state_or_province_file=inputs["state_or_province_file"],
     )
 
 

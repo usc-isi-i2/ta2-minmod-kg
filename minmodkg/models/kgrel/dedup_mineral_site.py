@@ -156,6 +156,14 @@ class DedupMineralSite(MappedAsDataclass, Base):
         else:
             top1_deposit_type = None
 
+        country = next(
+            (
+                site.country
+                for site, _ in rank_dedup_sites
+                if len(site.country.value) > 0
+            ),
+            dedup_sites[0].country,
+        )
         merged_dedup_site = DedupMineralSite(
             id=dedup_sites[0].id,
             name=next(
@@ -189,21 +197,16 @@ class DedupMineralSite(MappedAsDataclass, Base):
                 ms2score,
                 crs_names,
             ),
-            country=next(
-                (
-                    site.country
-                    for site, _ in rank_dedup_sites
-                    if len(site.country.value) > 0
-                ),
-                dedup_sites[0].country,
-            ),
+            country=country,
+            # as in from_sites: the state goes with the merged country
             state_or_province=next(
                 (
                     site.state_or_province
                     for site, _ in rank_dedup_sites
                     if len(site.state_or_province.value) > 0
+                    and state_fits(site.country.value, country.value)
                 ),
-                dedup_sites[0].state_or_province,
+                RefListID([], dedup_sites[0].state_or_province.refid),
             ),
             mineral_form=next(
                 (
@@ -287,11 +290,15 @@ class DedupMineralSite(MappedAsDataclass, Base):
             ),
             RefListID([], rank_sites[0].site_id),
         )
+        # The state goes with the merged country, so a curator who sets only the
+        # country keeps it, and never gets a lower-ranked record's state from
+        # another country.
         state_or_province = next(
             (
                 RefListID(site.location_view.state_or_province, site.site_id)
                 for site in rank_sites
                 if len(site.location_view.state_or_province) > 0
+                and state_fits(site.location_view.country, country.value)
             ),
             RefListID([], rank_sites[0].site_id),
         )
@@ -497,6 +504,18 @@ class DedupMineralSite(MappedAsDataclass, Base):
             modified_at=d["modified_at"],
         )
         return dedup_site
+
+
+def state_fits(
+    record_countries: Sequence[InternalID], countries: Sequence[InternalID]
+) -> bool:
+    """Whether a record's (or partial merge's) state can go with the merged
+    countries: there are none, or the record has countries and all of them are
+    merged ones. Its state is in one of its own countries (the merge-time
+    repair), so it is then in a merged one."""
+    return len(countries) == 0 or (
+        len(record_countries) > 0 and set(record_countries) <= set(countries)
+    )
 
 
 def top_5_deposit_types(

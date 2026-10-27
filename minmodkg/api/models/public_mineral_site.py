@@ -195,6 +195,7 @@ class InputPublicMineralSite(InputMineralSite):
                 if self.dedup_site_uri is not None
                 else None
             ),
+            state_index=entser.get_state_or_province_index(),
         )
         site.ms.modified_at = time.time_ns()
         site.ms.created_by = owner_uri

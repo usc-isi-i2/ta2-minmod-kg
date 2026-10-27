@@ -248,6 +248,12 @@ class MineralSiteETLService(BaseFileService[MineralSiteETLServiceConstructArgs])
             if corrections.get_path().exists():
                 corrections_files.append(InputFile.from_relpath(corrections))
 
+        # read by the state repair through the entity service; passed only so
+        # an edit to it (a new alias) re-runs the merge
+        state_or_province_file = InputFile.from_relpath(
+            args["entity_dir"] / "state_or_province.json"
+        )
+
         it: Iterable[tuple[SourceInfo, Path]] = get_parallel_executor(self.parallel)(
             typed_delayed(MergeFn.exec)(
                 self.workdir,
@@ -256,6 +262,7 @@ class MineralSiteETLService(BaseFileService[MineralSiteETLServiceConstructArgs])
                 infiles=infiles,
                 sameas_file=dedup_files[group],
                 corrections_files=corrections_files,
+                state_or_province_file=state_or_province_file,
                 outfile=merged_outdir
                 / group.source_name
                 / f"{group.bucket_no}.json{COMPRESSION}",
@@ -410,7 +417,7 @@ class MergeFn:
         return group, cls.get_instance(workdir, entity_dir).invoke(**kwargs)
 
     @cache(
-        backend=FileSqliteBackend.factory(filename="merge-v110.sqlite"),
+        backend=FileSqliteBackend.factory(filename="merge-v111.sqlite"),
         cache_ser_args={
             "infiles": lambda lst: orjson.dumps(
                 sorted(x.get_ident() for x in lst)
@@ -419,6 +426,7 @@ class MergeFn:
             "corrections_files": lambda lst: orjson.dumps(
                 sorted(x.get_ident() for x in lst)
             ).decode(),
+            "state_or_province_file": lambda x: x.get_ident(),
         },
     )
     def invoke(
@@ -427,6 +435,7 @@ class MergeFn:
         sameas_file: InputFile,
         outfile: Path,
         corrections_files: list[InputFile],
+        state_or_province_file: InputFile,
     ) -> Path:
         rid2sites = defaultdict(list)
         for infile in sorted(infiles, key=lambda x: x.path):
@@ -454,6 +463,7 @@ class MergeFn:
                     commodity_form_conversion=self.entity_service.get_commodity_form_conversion(),
                     crs_names=self.entity_service.get_crs_name(),
                     source_score=self.entity_service.get_data_source_score(),
+                    state_index=self.entity_service.get_state_or_province_index(),
                 )
                 norm_site.ms.dedup_site_id = dedup_map[norm_site.ms.site_id]
                 lst_msi.append(norm_site)

@@ -36,4 +36,11 @@ SELECT
     exists(
         SELECT 1 FROM pg_indexes
         WHERE indexname = 'ix_sample_element_site_id_element_is_bdl'
+    ) AS applied
+UNION ALL
+SELECT
+    '006_state_or_province_state_code' AS migration,
+    exists(
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'state_or_province' AND column_name = 'state_code'
     ) AS applied;
