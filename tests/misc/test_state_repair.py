@@ -616,7 +616,7 @@ def located(record_id, countries, states=(), score=0.5, created_by=SYSTEM):
 def merged(*sites):
     from minmodkg.models.kgrel.dedup_mineral_site import DedupMineralSite
 
-    dms = DedupMineralSite.from_sites(list(sites)).dms
+    dms = DedupMineralSite.from_sites(list(sites), crs_names={}).dms
     return (dms.country.value, dms.country.refid), (
         dms.state_or_province.value,
         dms.state_or_province.refid,
@@ -629,9 +629,10 @@ def merged_in_two_parts(*parts):
     from minmodkg.models.kgrel.dedup_mineral_site import DedupMineralSite
 
     dms = DedupMineralSite.from_dedup_sites(
-        [DedupMineralSite.from_sites(list(part)).dms for part in parts],
+        [DedupMineralSite.from_sites(list(part), crs_names={}).dms for part in parts],
         [site for part in parts for site in part],
         is_site_ranked=True,
+        crs_names={},
     ).dms
     return (dms.country.value, dms.country.refid), (
         dms.state_or_province.value,
