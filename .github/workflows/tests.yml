@@ -52,4 +52,5 @@ jobs:
             tests/services/test_paper_jsonld.py \
             tests/misc/test_commodity_corrections.py \
             tests/misc/test_state_repair.py \
+            tests/misc/test_country_corrections.py \
             -v --no-cov

@@ -10,6 +10,7 @@ import serde.json
 import xxhash
 from libactor.cache import cache
 from minmodkg.misc.commodity_corrections import CommodityCorrections
+from minmodkg.misc.country_corrections import CountryCorrections
 from minmodkg.misc.utils import group_by, makedict
 from minmodkg.models.kg.base import MINMOD_KG
 from minmodkg.models.kg.mineral_site import MineralSiteIdent
@@ -44,6 +45,8 @@ class MineralSiteETLServiceInvokeArgs(TypedDict):
     same_as_group: RelPath
     # data/corrections/commodity.csv of the data repository; optional
     commodity_corrections: NotRequired[RelPath]
+    # the data repository's country corrections list; optional
+    country_corrections: NotRequired[RelPath]
 
     output: RelPath
 
@@ -247,6 +250,10 @@ class MineralSiteETLService(BaseFileService[MineralSiteETLServiceConstructArgs])
         if (corrections := args.get("commodity_corrections")) is not None:
             if corrections.get_path().exists():
                 corrections_files.append(InputFile.from_relpath(corrections))
+        country_corrections_files = []
+        if (corrections := args.get("country_corrections")) is not None:
+            if corrections.get_path().exists():
+                country_corrections_files.append(InputFile.from_relpath(corrections))
 
         # read by the state repair through the entity service; passed only so
         # an edit to it (a new alias) re-runs the merge
@@ -262,6 +269,7 @@ class MineralSiteETLService(BaseFileService[MineralSiteETLServiceConstructArgs])
                 infiles=infiles,
                 sameas_file=dedup_files[group],
                 corrections_files=corrections_files,
+                country_corrections_files=country_corrections_files,
                 state_or_province_file=state_or_province_file,
                 outfile=merged_outdir
                 / group.source_name
@@ -417,13 +425,16 @@ class MergeFn:
         return group, cls.get_instance(workdir, entity_dir).invoke(**kwargs)
 
     @cache(
-        backend=FileSqliteBackend.factory(filename="merge-v111.sqlite"),
+        backend=FileSqliteBackend.factory(filename="merge-v112.sqlite"),
         cache_ser_args={
             "infiles": lambda lst: orjson.dumps(
                 sorted(x.get_ident() for x in lst)
             ).decode(),
             "sameas_file": lambda x: x.get_ident(),
             "corrections_files": lambda lst: orjson.dumps(
+                sorted(x.get_ident() for x in lst)
+            ).decode(),
+            "country_corrections_files": lambda lst: orjson.dumps(
                 sorted(x.get_ident() for x in lst)
             ).decode(),
             "state_or_province_file": lambda x: x.get_ident(),
@@ -435,6 +446,7 @@ class MergeFn:
         sameas_file: InputFile,
         outfile: Path,
         corrections_files: list[InputFile],
+        country_corrections_files: list[InputFile],
         state_or_province_file: InputFile,
     ) -> Path:
         rid2sites = defaultdict(list)
@@ -449,6 +461,11 @@ class MergeFn:
         corrections = CommodityCorrections.from_file(
             corrections_files[0].path if len(corrections_files) > 0 else None
         )
+        country_corrections = CountryCorrections.from_file(
+            country_corrections_files[0].path
+            if len(country_corrections_files) > 0
+            else None
+        )
 
         outfile.parent.mkdir(parents=True, exist_ok=True)
         # merge the data
@@ -458,6 +475,8 @@ class MergeFn:
                 # before the site is normalized, so the views and the KG export
                 # both see the corrected commodity
                 corrections.apply(raw_site)
+                # before the state repair, which needs the record's country
+                country_corrections.apply(raw_site)
                 norm_site = MineralSiteAndInventory.from_raw_site(
                     raw_site,
                     commodity_form_conversion=self.entity_service.get_commodity_form_conversion(),
