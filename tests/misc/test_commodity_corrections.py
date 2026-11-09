@@ -308,6 +308,7 @@ def merge(inputs: dict, name: str, corrections_files: list[InputFile]) -> Path:
         sameas_file=inputs["sameas_file"],
         outfile=inputs["root"] / f"out-{name}.json",
         corrections_files=corrections_files,
+        country_corrections_files=[],
         state_or_province_file=inputs["state_or_province_file"],
     )
 

@@ -244,6 +244,7 @@ def test_merge_cache_is_keyed_on_the_state_file(tmp_path: Path):
             sameas_file=infile(sameas),
             outfile=outfile,
             corrections_files=[],
+            country_corrections_files=[],
             state_or_province_file=infile(state_file),
         )
         return outfile.read_text() != "not merged"

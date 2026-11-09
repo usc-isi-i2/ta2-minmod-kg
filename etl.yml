@@ -121,6 +121,7 @@ pipeline:
       entity_dir: ::DATA_DIR::entities
       same_as_group: ::DATA_DIR::same-as/final/groups.json
       commodity_corrections: ::REPO::data/corrections/commodity.csv
+      country_corrections: ::REPO::data/corrections/country.csv
       output: ::DATA_DIR::mineral-sites
   - service: copy
     args:
