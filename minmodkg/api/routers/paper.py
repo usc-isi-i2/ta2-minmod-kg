@@ -77,7 +77,12 @@ def list_papers(
     commodity: Optional[str] = None,
     element: ElementQuery = None,
     include_bdl: IncludeBdlQuery = False,
-    deposit_type: Optional[str] = None,
+    deposit_type: Annotated[
+        Optional[list[str]],
+        Query(
+            description="A deposit type: MinMod id or name. Repeat to match any of several."
+        ),
+    ] = None,
     country: Optional[str] = None,
     state_or_province: Optional[str] = None,
     dedup_site_id: Optional[InternalID] = None,
@@ -87,14 +92,14 @@ def list_papers(
     return_count: Annotated[bool, Query()] = False,
 ):
     """Search papers: those with a site matching every filter, each with its
-    matching sites. Entity filters take a name or a MinMod id; country also
-    an ISO alpha-2/alpha-3 code."""
+    matching sites and their deposit type. Entity filters take a name or a
+    MinMod id; country also an ISO alpha-2/alpha-3 code."""
     results, total = paper_service.find_papers(
         commodity=norm_commodity(commodity) if commodity is not None else None,
         element=norm_element_filter(element, include_bdl),
         include_bdl=include_bdl,
-        deposit_type=(
-            norm_deposit_type(deposit_type) if deposit_type is not None else None
+        deposit_types=(
+            [norm_deposit_type(dt) for dt in deposit_type] if deposit_type else None
         ),
         country=norm_country_or_alias(country) if country is not None else None,
         state_or_province=(
@@ -117,8 +122,9 @@ def list_papers(
                     "record_id": site.record_id,
                     "name": site.name,
                     "dedup_site_id": site.dedup_site_id,
+                    "deposit_type": deposit_type,
                 }
-                for site in sites
+                for site, deposit_type in sites
             ],
         }
         for paper, sites in results

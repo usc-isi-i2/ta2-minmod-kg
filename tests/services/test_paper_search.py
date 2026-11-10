@@ -1,4 +1,4 @@
-"""Searching GeoChem papers by measured element and by country code. Docker-free, on in-memory
+"""Searching GeoChem papers by measured element, deposit type and country code. Docker-free, on in-memory
 SQLite like test_sample; get_sites aggregates with Postgres-only jsonb_agg,
 so GET /papers/{paper_id} is not covered here."""
 
@@ -27,7 +27,7 @@ from minmodkg.models.kgrel.sample_element import (
 from minmodkg.models.kgrel.views.mineral_inventory_view import MineralInventoryView
 from minmodkg.services.kgrel_entity import EntityService
 from minmodkg.services.paper import PaperService
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -42,11 +42,14 @@ PAPERS = {
     },
 }
 
+# dedup site top deposit types; ye_a has none
+DEPOSIT_TYPES = {"ono_a": "Q380", "ono_b": "Q416"}
+
 
 def make_site(paper_id: str, record_id: str) -> MineralSite:
     return MineralSite(
         site_id=f"site__{record_id}",
-        dedup_site_id="unused",
+        dedup_site_id=f"dedup__{record_id}",
         source_id=f"https://doi.org/{paper_id}",
         source_score=None,
         record_id=record_id,
@@ -88,6 +91,18 @@ def engine():
         ],
     )
     with Session(eng) as session:
+        # the real table has Postgres-only columns; the search reads just these
+        session.execute(
+            text(
+                "CREATE TABLE dedup_mineral_site"
+                " (id VARCHAR PRIMARY KEY, top1_deposit_type VARCHAR)"
+            )
+        )
+        for record_id, deposit_type in DEPOSIT_TYPES.items():
+            session.execute(
+                text("INSERT INTO dedup_mineral_site VALUES (:id, :dt)"),
+                {"id": f"dedup__{record_id}", "dt": deposit_type},
+            )
         for paper_id, sites in PAPERS.items():
             session.add(
                 Paper(
@@ -187,6 +202,19 @@ class TestSearch:
         }
         # Ga is at ono_a, the commodity at ono_b: no single site has both
         assert found(client, element="Ga", commodity="Q1") == {}
+
+    def test_any_of_deposit_types(self, client: TestClient):
+        assert found(client, deposit_type="Q380") == {"2004_Ono_etal": ["ono_a"]}
+        assert found(client, deposit_type=["Q380", "Q416"]) == {
+            "2004_Ono_etal": ["ono_a", "ono_b"]
+        }
+        # Ga is at ono_a, Q416 at ono_b
+        assert found(client, element="Ga", deposit_type="Q416") == {}
+
+    def test_returns_deposit_type(self, client: TestClient):
+        resp = client.get("/papers", params={"element": "Ga", "include_bdl": True})
+        types = {s["record_id"]: s["deposit_type"] for p in resp.json() for s in p["sites"]}
+        assert types == {"ono_a": "Q380", "ye_a": None}
 
     def test_count(self, client: TestClient):
         resp = client.get(
