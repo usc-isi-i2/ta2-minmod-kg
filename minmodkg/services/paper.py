@@ -75,7 +75,7 @@ class PaperService:
         commodity: Optional[InternalID] = None,
         element: Optional[str] = None,
         include_bdl: bool = False,
-        deposit_type: Optional[InternalID] = None,
+        deposit_types: Optional[list[InternalID]] = None,
         country: Optional[InternalID] = None,
         state_or_province: Optional[InternalID] = None,
         dedup_site_id: Optional[InternalID] = None,
@@ -83,10 +83,14 @@ class PaperService:
         limit: int = 50,
         offset: int = 0,
         return_count: bool = False,
-    ) -> tuple[list[tuple[Paper, list[MineralSite]]], Optional[int]]:
-        """Papers with a site matching every filter, each with those sites, and
-        the number of such papers when `return_count` is set. Deposit type,
-        country and state are the dedup site's, as in the editor's search."""
+    ) -> tuple[
+        list[tuple[Paper, list[tuple[MineralSite, Optional[InternalID]]]]],
+        Optional[int],
+    ]:
+        """Papers with a site matching every filter, each with those sites and
+        their dedup site's top deposit type, and the number of such papers when
+        `return_count` is set. Deposit type (any of `deposit_types`), country
+        and state are the dedup site's, as in the editor's search."""
         query = select(Paper, MineralSite).join(MineralSite, self.paper_site_join())
         if commodity is not None:
             # per site, so it uses the (site_id, commodity) index
@@ -102,12 +106,14 @@ class PaperService:
                     element, include_bdl, SampleElement.site_id == MineralSite.site_id
                 )
             )
-        if any(x is not None for x in (deposit_type, country, state_or_province)):
+        if deposit_types or country is not None or state_or_province is not None:
             query = query.join(
                 DedupMineralSite, DedupMineralSite.id == MineralSite.dedup_site_id
             )
-            if deposit_type is not None:
-                query = query.where(DedupMineralSite.top1_deposit_type == deposit_type)
+            if deposit_types:
+                query = query.where(
+                    DedupMineralSite.top1_deposit_type.in_(deposit_types)
+                )
             if country is not None:
                 query = query.where(DedupMineralSite.has_country(country))
             if state_or_province is not None:
@@ -140,9 +146,19 @@ class PaperService:
                     Paper.paper_id, MineralSite.site_id
                 )
             ).all()
-        out: dict[str, tuple[Paper, list[MineralSite]]] = {}
+            dedup_ids = {site.dedup_site_id for _, site in rows}
+            top_types = dict(
+                session.execute(
+                    select(DedupMineralSite.id, DedupMineralSite.top1_deposit_type).where(
+                        DedupMineralSite.id.in_(list(dedup_ids))
+                    )
+                ).all()
+            )
+        out: dict[str, tuple[Paper, list[tuple[MineralSite, Optional[InternalID]]]]] = {}
         for paper, site in rows:
-            out.setdefault(paper.paper_id, (paper, []))[1].append(site)
+            out.setdefault(paper.paper_id, (paper, []))[1].append(
+                (site, top_types.get(site.dedup_site_id))
+            )
         return [out[pid] for pid in paper_ids], total
 
     def find_by_id(self, paper_id: str) -> Optional[Paper]:
