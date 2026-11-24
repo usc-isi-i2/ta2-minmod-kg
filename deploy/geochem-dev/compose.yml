@@ -1,0 +1,80 @@
+# GeoChem dev stack: MinMod API + both syncs + the GeoChem HMI backend, next to
+# the existing Fuseki (`kg` on network minmod) and Postgres (`kg-postgres` on
+# network minmod_default). Settings come from .env (see env.template).
+#
+#   docker compose --env-file .env up -d --build
+name: geochem-dev
+
+x-backend: &backend
+  image: minmod-backend-geochem
+  build:
+    context: ../..
+    dockerfile: containers/backend/Dockerfile
+    args:
+      UID: ${HOST_UID}
+      GID: ${HOST_GID}
+  restart: unless-stopped
+  environment:
+    CFG_FILE: /home/criticalmaas/config/config.yml
+  networks: [minmod, minmod_default]
+  volumes:
+    - ${CFG_FILE}:/home/criticalmaas/config/config.yml:ro
+    - ${GEOCHEM_JSONLD_DIR}:${GEOCHEM_JSONLD_DIR}
+    - ${ENTITY_DIR}:${ENTITY_DIR}:ro
+
+x-hmi: &hmi
+  image: geochem-hmi-backend
+  build:
+    context: ${HMI_DIR}/hmi/backend
+  # the data dir must be writable by the host user, not root
+  user: "${HOST_UID}:${HOST_GID}"
+  env_file: ${HMI_ENV_FILE}
+  environment:
+    HOME: /tmp
+    HMI_DATA_DIR: ${HMI_DATA_DIR}
+    MINMOD_API_URL: http://geochem-api:8000/api/v1
+  networks: [minmod, minmod_default]
+  volumes:
+    - ${HMI_DATA_DIR}:${HMI_DATA_DIR}
+
+services:
+  geochem-api:
+    <<: *backend
+    ports:
+      - "127.0.0.1:8000:8000"
+    command: fastapi run /home/criticalmaas/kg/minmodkg/api/main.py
+
+  minmod-sync:
+    <<: *backend
+    volumes:
+      - ${CFG_FILE}:/home/criticalmaas/config/config.yml:ro
+      - ${SYNC_DATA_DIR}:${SYNC_DATA_DIR}
+    command: python -m minmodkg.services.sync ${SYNC_DATA_DIR} --backup-interval 60
+
+  geochem-sync:
+    <<: *backend
+    command: python -m minmodkg.services.sync.geochem ${GEOCHEM_JSONLD_DIR} --verbose
+
+  hmi:
+    <<: *hmi
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8301:8000"
+
+  # no-auth HMI used only while a refresh uploads the papers
+  hmi-load:
+    <<: *hmi
+    profiles: [refresh]
+    environment:
+      HOME: /tmp
+      HMI_DATA_DIR: ${HMI_DATA_DIR}
+      MINMOD_API_URL: http://geochem-api:8000/api/v1
+      AUTH_MODE: none
+    ports:
+      - "127.0.0.1:8399:8000"
+
+networks:
+  minmod:
+    external: true
+  minmod_default:
+    external: true

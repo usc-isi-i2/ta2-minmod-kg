@@ -49,6 +49,7 @@ jobs:
             tests/misc/test_coord_precision.py \
             tests/libraries/rdf/test_rdf_model.py \
             tests/etl/test_geochem_jsonld.py \
+            tests/etl/test_geochem_drop.py \
             tests/services/test_paper_jsonld.py \
             tests/misc/test_commodity_corrections.py \
             tests/misc/test_state_repair.py \
