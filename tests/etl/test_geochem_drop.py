@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
 from minmodkg.etl import geochem_drop
-from minmodkg.etl.geochem_drop import cited_supplements, scan
+from minmodkg.etl.geochem_drop import cited_supplements, extract, scan
 
 
 def write_paper(root: Path, paper_id: str, doi: str | None, **extra) -> Path:
@@ -113,3 +114,21 @@ def test_pdf_under_another_name_found_by_doi(tmp_path):
     assert found["2023_Soster_etal"].pdf == tmp_path / "pdfs/2023_Soster_etal1.pdf"
     assert found["2023_Soster_etal"].pdf_status == "doi, other name"
     assert found["2016_George_etal"].pdf_status == "doi"
+
+
+def test_supplement_inside_an_archive(tmp_path):
+    cited = "2020B_Cave_etal_supp_Supplementary Data_Table S2.xlsx"
+    write_paper(tmp_path, "2020B_Cave_etal", "10.1/cave", source=f"supp:{cited}")
+    archive = tmp_path / "Spreadsheets/2020B_Cave_etal_supp.zip"
+    archive.parent.mkdir()
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("Supplementary Data/", "")
+        zf.writestr("Supplementary Data/Table S2.xlsx", "sheet bytes")
+        zf.writestr("__MACOSX/Supplementary Data/._Table S2.xlsx", "junk")
+
+    (b,) = scan(tmp_path).bundles
+
+    assert b.missing_supplements == []
+    assert b.archived == [(archive, "Supplementary Data/Table S2.xlsx", cited)]
+    extract(archive, "Supplementary Data/Table S2.xlsx", tmp_path / "out" / cited)
+    assert (tmp_path / "out" / cited).read_text() == "sheet bytes"

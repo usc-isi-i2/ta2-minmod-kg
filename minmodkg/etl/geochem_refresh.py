@@ -26,7 +26,7 @@ from typing import Annotated, Optional
 
 import httpx
 import typer
-from minmodkg.etl.geochem_drop import Drop, PaperBundle, scan
+from minmodkg.etl.geochem_drop import Drop, PaperBundle, extract, scan
 
 QUERIES = Path(__file__).parent / "queries"
 COMPOSE_FILE = Path(__file__).parents[2] / "deploy/geochem-dev/compose.yml"
@@ -143,6 +143,9 @@ def print_drop(drop: Drop) -> None:
             typer.echo(f"  no PDF for {b.paper_id} ({b.pdf_status})")
         elif b.pdf_status == "no-text":
             typer.echo(f"  PDF for {b.paper_id} has no text to check: {b.pdf}")
+    n_files = sum(len(b.supplements) + len(b.archived) for b in drop.bundles)
+    n_archived = sum(len(b.archived) for b in drop.bundles)
+    typer.echo(f"  {n_files} cited supplements found, {n_archived} of them in archives")
     missing = [b for b in drop.bundles if b.missing_supplements]
     for b in missing:
         typer.echo(
@@ -186,6 +189,16 @@ def wait_for(url: str, timeout: float = 180) -> None:
             pass
         time.sleep(2)
     raise RuntimeError(f"{url} did not come up in {timeout}s")
+
+
+def unpack_supplements(drop: Drop, target: Path) -> None:
+    """Pull cited files out of their archives under the cited name."""
+    for b in drop.bundles:
+        for archive, member, name in b.archived:
+            path = target / b.paper_id / name
+            extract(archive, member, path)
+            b.supplements.append(path)
+        b.archived = []
 
 
 def upload(client: httpx.Client, b: PaperBundle) -> Optional[str]:
@@ -312,6 +325,7 @@ def main(
     stack.fuseki_compact()
 
     typer.echo("Loading the HMI")
+    unpack_supplements(drop, backup_dir / "supplements")
     failed = load_hmi(stack, drop)
 
     stack.compose("up", "-d", *SERVICES)
@@ -325,7 +339,7 @@ def main(
         "counts": result,
         "papers": [
             {k: str(v) if isinstance(v, Path) else v for k, v in asdict(b).items()}
-            | {"supplements": [str(s) for s in b.supplements]}
+            | {"supplements": [str(s) for s in b.supplements], "archived": []}
             for b in drop.bundles
         ],
     }

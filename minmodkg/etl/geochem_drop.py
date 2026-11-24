@@ -3,8 +3,9 @@
 A drop is a directory tree holding `geochem_<paper_id>.canonical.jsonld`
 files plus, anywhere below it, the papers' PDFs, the normalized
 `extraction_<paper_id>.xlsx` workbooks and the supplementary files the
-JSON-LD cites as `supp:<filename>`. Nothing here touches a database, so a
-drop can be checked before anything is wiped.
+JSON-LD cites as `supp:<filename>`. A cited file may sit inside a .zip/.7z,
+cited as `<archive stem>_<member path with / as _>`. Nothing here touches a
+database, so a drop can be checked before anything is wiped.
 """
 
 from __future__ import annotations
@@ -12,6 +13,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
+import subprocess
+import zipfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +36,8 @@ class PaperBundle:
     pdf_status: str = "missing"
     workbook: Optional[Path] = None
     supplements: list[Path] = field(default_factory=list)
+    # (archive, member, cited name) for cited files still inside an archive
+    archived: list[tuple[Path, str, str]] = field(default_factory=list)
     missing_supplements: list[str] = field(default_factory=list)
 
 
@@ -137,6 +143,58 @@ def pick(candidates: list[Path], hints: list[str]) -> Optional[Path]:
     return candidates[0] if candidates else None
 
 
+def archive_members(archive: Path) -> list[str]:
+    if archive.suffix.lower() == ".zip":
+        try:
+            with zipfile.ZipFile(archive) as zf:
+                return [n for n in zf.namelist() if not n.endswith("/")]
+        except (zipfile.BadZipFile, OSError):
+            return []
+    # .7z needs bsdtar (libarchive) or 7z on the host
+    if shutil.which("bsdtar"):
+        cmd = ["bsdtar", "-tf", str(archive)]
+    else:
+        cmd = ["7z", "l", "-ba", "-slt", str(archive)]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, check=False).stdout
+    except OSError:
+        return []
+    if cmd[0] == "7z":
+        lines = [
+            ln.split("= ", 1)[1] for ln in out.splitlines() if ln.startswith("Path = ")
+        ]
+    else:
+        lines = out.splitlines()
+    return [n for n in lines if n and not n.endswith("/")]
+
+
+def archived_names(archives: list[Path]) -> dict[str, tuple[Path, str]]:
+    """Cited name -> (archive, member) for every member of every archive."""
+    out = {}
+    for archive in archives:
+        for member in archive_members(archive):
+            if member.startswith("__MACOSX/") or Path(member).name.startswith("._"):
+                continue
+            out.setdefault(
+                f"{archive.stem}_{member.replace('/', '_')}", (archive, member)
+            )
+    return out
+
+
+def extract(archive: Path, member: str, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as out:
+        if archive.suffix.lower() == ".zip":
+            with zipfile.ZipFile(archive) as zf, zf.open(member) as src:
+                shutil.copyfileobj(src, out)
+        else:
+            if shutil.which("bsdtar"):
+                cmd = ["bsdtar", "-xOf", str(archive), member]
+            else:
+                cmd = ["7z", "x", "-so", str(archive), member]
+            subprocess.run(cmd, stdout=out, check=True)
+
+
 def scan(drop_dir: Path, exclude: frozenset[str] = frozenset()) -> Drop:
     files = [p for p in drop_dir.rglob("*") if p.is_file()]
     by_name: dict[str, list[Path]] = defaultdict(list)
@@ -164,6 +222,8 @@ def scan(drop_dir: Path, exclude: frozenset[str] = frozenset()) -> Drop:
     for paper_id in exclude & docs.keys():
         excluded.setdefault(paper_id, "excluded on the command line")
 
+    archives = [p for p in files if p.suffix.lower() in (".zip", ".7z")]
+    in_archives = archived_names(archives) if archives else {}
     texts = PdfTexts()
     bundles = []
     for paper_id, (path, doc) in docs.items():
@@ -191,6 +251,8 @@ def scan(drop_dir: Path, exclude: frozenset[str] = frozenset()) -> Drop:
         for name in cited_supplements(doc):
             if found := pick(by_name.get(name, []), hints):
                 bundle.supplements.append(found)
+            elif name in in_archives:
+                bundle.archived.append((*in_archives[name], name))
             else:
                 bundle.missing_supplements.append(name)
         bundles.append(bundle)
